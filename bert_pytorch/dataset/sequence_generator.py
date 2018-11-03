@@ -1,3 +1,4 @@
+import json
 import random
 
 # for monolingual, create json on each line
@@ -5,50 +6,54 @@ import random
 # for bilingual sequences, add bilingual sequence and token alignment
 # add bilingual sentence continuation as well
 class MonolingualSequenceGenerator:
-	def __init__(self, mono_corpus, sent_corpus, text_corpus, max_seq_len, prioritize_corpora=True):
+	def __init__(self, corpus, max_seq_len=512):
 		self.max_seq_len = max_seq_len
-		self.prioritize_corpora = prioritize_corpora
-		self.corpora = [text_corpus, sent_corpus, mono_corpus]
+		self.corpus = corpus
 	
-	def generate_samples(self, n_samples, out_path):
+	def random_samples(self, n_samples, out_path):
 		with open(out_path, 'w+') as f_out:
-			for i in n_samples:
-				if prioritize_corpora:
-					sample = self.priority_sample()
-				else:
-					sample = self.random_sample()
+			for i in range(n_samples):
+				document = random.choice(self.corpus)
+				sample = self.sample_sentences(document)
 
 				if sample is None:
-					print("Failed to write {} samples, got to {}".format(n_samples, i))
+					print("Failed to write {} samples, got to {}".format(n_samples, i+1))
 					break
 
-				f_out.writeline(json.dumps(sample))
-					
+				f_out.write(json.dumps(sample) + '\n')
 
-	def random_sample(self):
-		corpus = random.choice(self.corpora)
-		sentences = corpus.
-		# sample multiple sentences
-		# write alt words and alignment if available
-		# write alt sentence and alignment if available
-		# write to dict
-		sample = {
-			"sentences": [],
-			"alt_text": [],
-			"text_alignment": [],
-			"alt_sentences": [],
-			"sentence_alignment": [],
-			"alt_language": ""
-		}
+		print("generated {} samples to {}".format(n_samples, out_path))
+
+	def sequential_samples(self, out_path):
+		with open(out_path, 'w+') as f_out:
+			for i, document in enumerate(self.corpus):
+				sample = self.sample_sentences(document)
+
+				if sample is None:
+					print("Failed to sample from all documents, got to {}".format(i+1))
+					break
+
+				f_out.write(json.dumps(sample) + '\n')
+
+		print("generated {} samples to {}".format(i, out_path))
+
+	def sample_sentences(self, document):
+		start = random.randint(0, len(document) - 5)
+		end = start + 1
+
+		seq_len = len(document[start]['text'])
+		while end < len(document) and seq_len < self.max_seq_len:
+			seq_len += len(document[end]['text'])
+			end += 1
+		
+		sample = {"sentences": [sentence['text'] for sentence in document[start:end]]}
+		if "alt_text" in document[start]:
+			sample["alt_sentences"] = [sentence["alt_text"] for sentence in document[start:end]]
+			sample["alt_language"] = document[start]["alt_language"]
+			if "text_alignment" in document[start]:
+				sample["text_alignment"] = [sentence["text_alignment"] for sentence in document[start:end]]
+
 		return sample
-
-	def priority_sample(self):
-		# start with text aligned in order
-		# if out of text aligned then sentence aligned
-		# if out of sentence aligned then monolingual
-		# write alt words and alignment if available
-		# write alt sentence and alignment if available
-		# write to dict
 
 
 # for discriminator, have tsv file
@@ -57,18 +62,30 @@ class DiscriminatorSequenceGenerator:
 	def __init__(self, language_corpora, max_seq_len=512):
 		self.languages = set(language_corpora.keys())
 		self.max_seq_len = max_seq_len
-
-		# open file handle for each corpus
+		self.language_corpora = language_corpora
 
 	def write_samples(self, n_samples, out_path):
 		with open(out_path, 'w+') as f_out:
 			for i in n_samples:
-				language, sentences = self.random_sample()
-				f_out.write("{}\t{}\n".format(language, sentences))
+				f_out.writeline(json.dumps(self.random_sample()))
 
 	def random_sample(self):
-		# select random language
-		# select random corpus from language
-		# sample multiple sentences of at most max_seq_len
-		return language, sentences
+		language = random.choice(self.languages)
+		corpus = random.choice(self.language_corpora[language])
+		document = random.choice(corpus)
 
+		start = random.randint(len(sentences) - 5)
+		end = start + 1
+
+		seq_len = len(document[start]['text'])
+		sentences = [document[start]['text']]
+		while end < len(sentences) and seq_len < self.max_seq_len:
+			sentences.append(document[end]['text'])
+			seq_len += len(document[end]['text'])
+			end += 1
+
+		return {"language": language, "sentences": sentences}
+
+
+if __name__ == '__main__':
+	print("Running smoke tests")

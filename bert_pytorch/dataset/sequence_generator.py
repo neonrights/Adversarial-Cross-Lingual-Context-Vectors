@@ -1,10 +1,7 @@
 import json
 import random
 
-# for monolingual, create json on each line
-# json contains sequence of in language tokens
-# for bilingual sequences, add bilingual sequence and token alignment
-# add bilingual sentence continuation as well
+
 class MonolingualSequenceGenerator:
 	def __init__(self, corpus, max_seq_len=512):
 		self.max_seq_len = max_seq_len
@@ -41,23 +38,15 @@ class MonolingualSequenceGenerator:
 		start = random.randint(0, len(document) - 5)
 		end = start + 1
 
-		seq_len = len(document[start]['text'])
-		while end < len(document) and seq_len < self.max_seq_len:
-			seq_len += len(document[end]['text'])
+		seq_len = len(document['sentences'][start])
+		while end < len(document['sentences']) and seq_len < self.max_seq_len:
+			seq_len += len(document['sentences'][end])
 			end += 1
-		
-		sample = {"sentences": [sentence['text'] for sentence in document[start:end]]}
-		if "alt_text" in document[start]:
-			sample["alt_sentences"] = [sentence["alt_text"] for sentence in document[start:end]]
-			sample["alt_language"] = document[start]["alt_language"]
-			if "text_alignment" in document[start]:
-				sample["text_alignment"] = [sentence["text_alignment"] for sentence in document[start:end]]
 
-		return sample
+		return dict((key, value[start:end]) if type(value) is list else (key, value)
+				for key, value in document.items())
 
 
-# for discriminator, have tsv file
-# each line contains language of origin and sequence of language tokens split by tab
 class DiscriminatorSequenceGenerator:
 	def __init__(self, language_corpora, max_seq_len=512):
 		self.languages = set(language_corpora.keys())
@@ -77,14 +66,12 @@ class DiscriminatorSequenceGenerator:
 		start = random.randint(len(sentences) - 5)
 		end = start + 1
 
-		seq_len = len(document[start]['text'])
-		sentences = [document[start]['text']]
-		while end < len(sentences) and seq_len < self.max_seq_len:
-			sentences.append(document[end]['text'])
-			seq_len += len(document[end]['text'])
+		seq_len = len(document['sentences'][start])
+		while end < len(document['sentences']) and seq_len < self.max_seq_len:
+			seq_len += len(document['sentences'][end])
 			end += 1
 
-		return {"language": language, "sentences": sentences}
+		return {"language": language, "sentences": document['sentences'][start:end]}
 
 
 if __name__ == '__main__':

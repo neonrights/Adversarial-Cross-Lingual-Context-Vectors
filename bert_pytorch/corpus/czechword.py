@@ -1,19 +1,18 @@
 import re
 import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape
 
 from .corpusreader import *
-
-
-def fix_unescaped_xml(file_string):
-	pass # replace unescaped characters where appropriate
-
+from debugger import exception_debugger
 
 class EnCzWordReader(CorpusReader):
-	def __init__(self, *args, **kwargs):
+	def __init__(self, *args, language='english', **kwargs):
 		super().__init__(*args, **kwargs)
 		regex = re.compile(r"data/.*\.wa")
 		self.files = [file for file in self.files if regex.match(file)]
+		self.language = 'english'
 
+	@exception_debugger
 	def extract_sentences(self, file):
 		print(file)
 		if self.corpus_type == 'dir':
@@ -21,10 +20,10 @@ class EnCzWordReader(CorpusReader):
 			root = tree.getroot()
 		elif self.corpus_type == 'tar':
 			file = self.corpus.extractfile(file)
-			file_string = file.read().decode('utf-8')
+			file_string = EnCzWordReader.fix_xml(file.read().decode('utf-8'))
 			root = ET.fromstring(file_string)
 		else:
-			raise BadCorpusError("corpus was not a directory, zip file, or tarball")
+			raise BadCorpusError("corpus was not a directory or tarball")
 
 		keys = ["sentences", "alt_sentences", "text_alignment", "alt_language", "language"]
 		english, czech, text_alignment = list(), list(), list()
@@ -32,35 +31,23 @@ class EnCzWordReader(CorpusReader):
 			english.append(s.find("english").text.split())
 			czech.append(s.find("czech").text.split())
 			alignment = [pair.split('-') for pair in s.find("sure").text.split()]
-			text_alignment.append(dict((b, int(a)) for a, b in alignment))
-			
-		return dict(zip(keys, [english, czech, text_alignment, 'czech', 'english']))
-
-
-class CzEnWordReader(CorpusReader):
-	def __init__(self, *args, **kwargs):
-		super().__init__(*args, **kwargs)
-		regex = re.compile(r"data/.*\.wa")
-		self.files = [file for file in self.files if regex.match(file)]
-
-	def extract_sentences(self, file):
-		if self.corpus_type == 'dir':
-			tree = ET.parse(file)
-			root = tree.getroot()
-		elif self.corpus_type == 'tar':
-			file = self.corpus.extractfile(file)
-			file_string = file.read().decode('utf-8')
-			root = ET.fromstring(file_string)
+			if self.language == 'english':
+				text_alignment.append({int(a): int(b) for a, b in alignment})
+			else:
+				text_alignment.append({int(b): int(a) for a, b in alignment})
+		
+		if self.language == 'english':
+			return dict(zip(keys, [english, czech, text_alignment, 'czech', 'english']))
 		else:
-			raise BadCorpusError("corpus was not a directory, zip file, or tarball")
+			return dict(zip(keys, [czech, english, text_alignment, 'english', 'czech']))
 
-		keys = ["sentences", "alt_sentences", "text_alignment", "alt_language", "language"]
-		english, czech, text_alignment = list(), list(), list()
-		for s in root:
-			english.append(s.find("english").text.split())
-			czech.append(s.find("czech").text.split())
-			alignment = [pair.split('-') for pair in s.find("sure").text.split()]
-			text_alignment.append(dict((b, int(a)) for a, b in alignment))
-			
-		return dict(zip(keys, [czech, english, text_alignment, 'english', 'czech']))
+	@staticmethod
+	def fix_xml(file_string):
+		# fixes unescaped characters in tags
+		# TOOD fix tokenization errors
+		file_string = re.sub(r"(<english.*?>)(.*)</english>\n",
+				lambda m: m.group(1) + escape(m.group(2)) + "</english>\n", file_string)
+		file_string = re.sub(r"(<czech.*?>)(.*)</czech>\n",
+				lambda m: m.group(1) + escape(m.group(2)) + "</czech>\n", file_string)
+		return file_string
 

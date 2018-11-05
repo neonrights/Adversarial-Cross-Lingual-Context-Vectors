@@ -26,17 +26,15 @@ class EnCzWordReader(CorpusReader):
 		else:
 			raise BadCorpusError("corpus was not a directory, zip file, or tarball")
 
-		columns = ["text", "alt_text", "text_alignment", "alt_language", "language"]
-		sentences = list()
+		keys = ["sentences", "alt_sentences", "text_alignment", "alt_language", "language"]
+		english, czech, text_alignment = list(), list(), list()
 		for s in root:
-			english = s.find("english").text.split()
-			czech = s.find("czech").text.split()
-			alignment = [tuple(pair.split('-')) for pair in s.find("sure").text.split()]
-			data = [english, czech, alignment, "czech", "english"]
-
-			sentences.append(dict(zip(columns, data)))
-
-		return sentences
+			english.append(s.find("english").text.split())
+			czech.append(s.find("czech").text.split())
+			alignment = [pair.split('-') for pair in s.find("sure").text.split()]
+			text_alignment.append(dict((b, int(a)) for a, b in alignment))
+			
+		return dict(zip(keys, [english, czech, text_alignment, 'czech', 'english']))
 
 
 class CzEnWordReader(CorpusReader):
@@ -56,16 +54,13 @@ class CzEnWordReader(CorpusReader):
 		else:
 			raise BadCorpusError("corpus was not a directory, zip file, or tarball")
 
-		columns = ["text", "alt_text", "text_alignment", "alt_language", "language"]
-		sentences = list()
+		keys = ["sentences", "alt_sentences", "text_alignment", "alt_language", "language"]
+		english, czech, text_alignment = list(), list(), list()
 		for s in root:
-			english = s.find("english").text.split()
-			czech = s.find("czech").text.split()
-			alignment = [tuple(pair.split('-')) for pair in s.find("sure").text.split()]
-			alignment = [(b, a) for a, b in alignment]
-			data = [czech, english, alignment, "english", "czech"]
-
-			sentences.append(dict(zip(columns, data)))
-
-		return sentences
+			english.append(s.find("english").text.split())
+			czech.append(s.find("czech").text.split())
+			alignment = [pair.split('-') for pair in s.find("sure").text.split()]
+			text_alignment.append(dict((b, int(a)) for a, b in alignment))
+			
+		return dict(zip(keys, [czech, english, text_alignment, 'english', 'czech']))
 

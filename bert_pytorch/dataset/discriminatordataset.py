@@ -6,6 +6,9 @@ import json
 
 
 class DiscriminatorDataset(Dataset):
+    """
+    pytorch dataset that loads training data for model discriminator
+    """
 	def __init__(self, corpus_path, vocab, language_ids, seq_len,
 				encoding="utf-8", corpus_lines=None, on_memory=True):
         self.vocab = vocab

@@ -3,7 +3,15 @@ import random
 
 
 class DiscriminatorSequenceGenerator:
+	"""
+	Generates data file to be used to train a language discriminator.
+	Data file is expected to be read by discriminator dataset
+	"""
 	def __init__(self, language_corpora, max_seq_len=512):
+		"""
+		language_corpora: a dictionary with language name as key and a list of corpus
+			readers corresponding to a corpus in that language
+		"""
 		self.languages = set(language_corpora.keys())
 		self.max_seq_len = max_seq_len
 		self.language_corpora = language_corpora

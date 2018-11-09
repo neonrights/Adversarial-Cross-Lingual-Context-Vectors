@@ -3,7 +3,14 @@ import random
 
 
 class LanguageSequenceGenerator:
+	"""
+	Generates data file to train or test a model for a specific language.
+	Data file is expected to be read by languagedataset.
+	"""
 	def __init__(self, corpus, max_seq_len=512):
+		"""
+		corpus: an instance of corpusreader or a child class
+		"""
 		self.max_seq_len = max_seq_len
 		self.corpus = corpus
 	

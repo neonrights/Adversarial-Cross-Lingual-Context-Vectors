@@ -6,6 +6,10 @@ from .corpusreader import *
 from debugger import exception_debugger
 
 class EnCzWordReader(CorpusReader):
+	"""
+	Reader used in dataset generator programs. Reads the Czech-English Manual
+	Word Alignment corpus. <https://lindat.mff.cuni.cz/repository/xmlui/handle/11234/1-1804>
+	"""
 	def __init__(self, *args, language='english', **kwargs):
 		super().__init__(*args, **kwargs)
 		regex = re.compile(r"data/.*\.wa")
@@ -43,8 +47,9 @@ class EnCzWordReader(CorpusReader):
 
 	@staticmethod
 	def fix_xml(file_string):
-		# fixes unescaped characters in tags
-		# TOOD fix tokenization errors
+		"""
+		fixes bad xml endemic to corpus and potential tokenization differences
+		"""
 		file_string = re.sub(r"(<english.*?>)(.*)</english>\n",
 				lambda m: m.group(1) + escape(m.group(2)) + "</english>\n", file_string)
 		file_string = re.sub(r"(<czech.*?>)(.*)</czech>\n",

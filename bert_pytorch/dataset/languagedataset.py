@@ -6,6 +6,9 @@ import json
 
 
 class LanguageDataset(Dataset):
+    """
+    pytorch dataset that loads training/test dataset for a specific language
+    """
 	def __init__(self, corpus_path, vocab, language, seq_len,
 				encoding="utf-8", corpus_lines=None, on_memory=True, prob_config=None):
         self.vocab = vocab

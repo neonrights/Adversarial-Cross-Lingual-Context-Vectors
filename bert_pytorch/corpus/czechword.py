@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 from .corpusreader import *
-from debugger import exception_debugger
+
 
 class EnCzWordReader(CorpusReader):
 	"""
@@ -14,9 +14,8 @@ class EnCzWordReader(CorpusReader):
 		super().__init__(*args, **kwargs)
 		regex = re.compile(r"data/.*\.wa")
 		self.files = [file for file in self.files if regex.match(file)]
-		self.language = 'english'
+		self.language = language
 
-	@exception_debugger
 	def extract_sentences(self, file):
 		print(file)
 		if self.corpus_type == 'dir':

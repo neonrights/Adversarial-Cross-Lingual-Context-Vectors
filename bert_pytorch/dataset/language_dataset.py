@@ -3,6 +3,18 @@ import tqdm
 import torch
 import random
 import json
+import pdb
+
+
+class ProbConfig:
+    """
+    Data carrying class for pretraining probabilities
+    """
+    def __init__(self, mask_prob=0.15, keep_prob=0.1, swap_prob=0.1, swap_language_prob=0.1):
+        self.mask_prob = mask_prob
+        self.keep_prob = keep_prob
+        self.swap_prob = swap_prob
+        self.swap_language_prob = swap_language_prob
 
 
 class LanguageDataset(Dataset):
@@ -20,18 +32,22 @@ class LanguageDataset(Dataset):
         self.corpus_path = corpus_path
         self.encoding = encoding
 
+        if prob_config is None:
+            prob_config = ProbConfig()
+
         self.mask_prob = prob_config.mask_prob
         self.keep_prob = prob_config.keep_prob
         self.swap_prob = self.keep_prob + prob_config.swap_prob
-        self.swap_word_language_prob = prob_config.swap_word_language_prob
+        self.swap_language_prob = prob_config.swap_language_prob
 
         with open(corpus_path, "r", encoding=encoding) as f:
             if self.corpus_lines is None and not on_memory:
+                self.corpus_lines = 0
                 for _ in tqdm.tqdm(f, desc="Loading Dataset", total=corpus_lines):
                     self.corpus_lines += 1
 
             if on_memory:
-                self.lines = [line[:-1].split("\t")
+                self.lines = [json.loads(line)
                               for line in tqdm.tqdm(f, desc="Loading Dataset", total=corpus_lines)]
                 self.corpus_lines = len(self.lines)
 
@@ -39,7 +55,7 @@ class LanguageDataset(Dataset):
             self.file = open(corpus_path, "r", encoding=encoding)
             self.random_file = open(corpus_path, "r", encoding=encoding)
 
-            for _ in range(random.randint(self.corpus_lines if self.corpus_lines < 1000 else 1000)):
+            for _ in range(random.randrange(self.corpus_lines if self.corpus_lines < 1000 else 1000)):
                 self.random_file.__next__()
 
     def __len__(self):
@@ -52,32 +68,31 @@ class LanguageDataset(Dataset):
         s2_random, s2_label = self.random_word(s2)
 
         # [CLS] tag = SOS tag, [SEP] tag = EOS tag
-        s1 = [self.vocab.sos_index] + s1_random + [self.vocab.eos_index]
-        s1 = s1_random + [self.vocab.eos_index]
+        s1_ids = [self.vocab.sos_index] + s1_random + [self.vocab.eos_index]
+        s2_ids = s2_random + [self.vocab.eos_index]
 
         s1_label = [self.vocab.pad_index] + s1_label + [self.vocab.pad_index]
         s2_label = s2_label + [self.vocab.pad_index]
 
-        segment_label = ([1 for _ in range(len(s1))] + [2 for _ in range(len(s2))])[:self.seq_len]
-        input_ids = (s1 + s2)[:self.seq_len]
+        segment_label = ([1 for _ in range(len(s1_ids))] + [2 for _ in range(len(s2_ids))])[:self.seq_len]
+        input_ids = (s1_ids + s2_ids)[:self.seq_len]
         token_labels = (s1_label + s2_label)[:self.seq_len]
 
         padding = [self.vocab.pad_index for _ in range(self.seq_len - len(input_ids))]
         input_ids.extend(padding), token_labels.extend(padding), segment_label.extend(padding)
-
         output = {"input_ids": input_ids,
                   "token_labels": token_labels,
                   "segment_label": segment_label,
-                  "is_next": is_next_label}
+                  "is_next": is_next}
 
         return dict((key, torch.tensor(value)) if type(value) is not str else (key, value)
-        		for key, value in output.items())
+                for key, value in output.items())
 
     def random_word(self, sample):
-    	sentence= sample['sentences']
-        output_label = []
+        tokens = sample['sentences'].copy()
+        output_label = list()
 
-        for i, token in enumerate(sentence):
+        for i, token in enumerate(tokens):
             prob = random.random()
             if prob < self.mask_prob:
                 prob = random.random()
@@ -89,11 +104,13 @@ class LanguageDataset(Dataset):
                     tokens[i] = self.vocab.mask_index
 
                 try:
-					if random.random() < self.swap_word_language_prob:
-						i = sample['text_alignment'][str(i)]
-						token = sample['alt_sentences'][i]
-				finally:
-					output_label.append(self.vocab.stoi.get(token, self.vocab.unk_index))
+                    if random.random() < self.swap_language_prob:
+                        i = sample['text_alignment'][str(i)]
+                        token = sample['alt_sentences'][i]
+                except KeyError:
+                    pass # no aligned token
+                finally:
+                    output_label.append(self.vocab.stoi.get(token, self.vocab.unk_index))
 
             else:
                 tokens[i] = self.vocab.stoi.get(token, self.vocab.unk_index)
@@ -102,14 +119,14 @@ class LanguageDataset(Dataset):
         return tokens, output_label
 
     def random_sent(self, sample):
-        split = random.randint(0, len(sample_dict['sentences'] - 1))
+        split = random.randrange(len(sample['sentences']) - 1)
         s1 = dict((key, value[split]) if type(value) is list else (key, value)
-        		for key, value in sample.items()) # first half of segment
+                for key, value in sample.items()) # first half of segment
 
         if random.random() > 0.5:
-        	s2 = dict((key, value[split+1]) if type(value) is list else (key, value)
-        			for key, value in sample.items()) # second half of segment
-        	return s1, s2, 1
+            s2 = dict((key, value[split+1]) if type(value) is list else (key, value)
+                    for key, value in sample.items()) # second half of segment
+            return s1, s2, 1
         else:
             return s1, self.get_random_line(), 0
 
@@ -127,17 +144,18 @@ class LanguageDataset(Dataset):
 
     def get_random_line(self):
         if self.on_memory:
-            return self.lines[random.randrange(len(self.lines))]
-
-        line = self.file.__next__()
-        if line is None:
-            self.file.close()
-            self.file = open(self.corpus_path, "r", encoding=self.encoding)
-            for _ in range(random.randint(self.corpus_lines if self.corpus_lines < 1000 else 1000)):
-                self.random_file.__next__()
-            line = self.random_file.__next__()
-
-        sample = json.loads(line)
-        split = random.randint(0, len(sample['sentences']))
+            sample = self.lines[random.randrange(len(self.lines))]
+        else:
+            line = self.file.__next__()
+            if line is None:
+                self.file.close()
+                self.file = open(self.corpus_path, "r", encoding=self.encoding)
+                for _ in range(random.randint(self.corpus_lines if self.corpus_lines < 1000 else 1000)):
+                    self.random_file.__next__()
+                line = self.random_file.__next__()
+            
+            sample = json.loads(line)
+        
+        split = random.randrange(len(sample['sentences']))
         return dict((key, value[split]) if type(value) is list else (key, value)
-        	for key, value in sample.items())
+            for key, value in sample.items())

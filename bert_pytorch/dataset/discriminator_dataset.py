@@ -22,6 +22,7 @@ class DiscriminatorDataset(Dataset):
 
         with open(corpus_path, "r", encoding=encoding) as f:
             if self.corpus_lines is None and not on_memory:
+                self.corpus_lines = 0
                 for _ in tqdm.tqdm(f, desc="Loading Dataset", total=corpus_lines):
                     self.corpus_lines += 1
 
@@ -34,7 +35,7 @@ class DiscriminatorDataset(Dataset):
             self.file = open(corpus_path, "r", encoding=encoding)
             self.random_file = open(corpus_path, "r", encoding=encoding)
 
-            for _ in range(random.randint(self.corpus_lines if self.corpus_lines < 1000 else 1000)):
+            for _ in range(random.randrange(self.corpus_lines if self.corpus_lines < 1000 else 1000)):
                 self.random_file.__next__()
 
     def __len__(self):

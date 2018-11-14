@@ -174,6 +174,9 @@ class JSONVocab(WordVocab):
     """
     def __init__(self, json_texts, max_size=None, min_freq=1):
         counter = Counter()
+        if type(json_texts) is str:
+            json_texts = [json_texts]
+
         for json_text in json_texts:
             with open(json_text, 'r') as f:
                 for line in tqdm.tqdm(f, desc="Reading {}".format(json_text), bar_format="{l_bar}{r_bar}"):

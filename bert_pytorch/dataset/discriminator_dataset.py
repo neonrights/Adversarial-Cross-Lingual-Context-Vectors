@@ -9,8 +9,8 @@ class DiscriminatorDataset(Dataset):
     """
     pytorch dataset that loads training data for model discriminator
     """
-	def __init__(self, corpus_path, vocab, language_ids, seq_len,
-				encoding="utf-8", corpus_lines=None, on_memory=True):
+    def __init__(self, corpus_path, vocab, language_ids, seq_len,
+                encoding="utf-8", corpus_lines=None, on_memory=True):
         self.vocab = vocab
         self.language_ids = language_ids
         self.seq_len = seq_len
@@ -45,7 +45,7 @@ class DiscriminatorDataset(Dataset):
         label = self.language_ids[line['language']]
         
         input_ids = [self.vocab.stoi.get(token, self.vocab.unk_index)
-        	for sentence in line['sentences'] for token in sentence]
+            for sentence in line['sentences'] for token in sentence]
 
         input_ids = [self.vocab.sos_index] + input_ids + [self.vocab.eos_index]
         input_ids = input_ids[:self.seq_len]

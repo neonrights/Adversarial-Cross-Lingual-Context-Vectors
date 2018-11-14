@@ -1,4 +1,5 @@
 import pickle
+import json
 import tqdm
 from collections import Counter
 
@@ -163,6 +164,35 @@ class WordVocab(Vocab):
 
     @staticmethod
     def load_vocab(vocab_path: str) -> 'WordVocab':
+        with open(vocab_path, "rb") as f:
+            return pickle.load(f)
+
+
+class JSONVocab(Vocab):
+    """
+    Builds vocab from json encoded sentences created by corpus generators
+    """
+    def __init__(self, json_texts, max_size=None, min_freq=1):
+        counter = Counter()
+        for json_text in json_texts:
+            with open(json_text, 'r') as f:
+                for line in tqdm.tqdm(f, desc="Reading {}".format(json_text), bar_format="{l_bar}{r_bar}"):
+                    document = json.loads(line)
+                    for sentence in document['sentences']:
+                        for word in sentence:
+                            counter[word] += 1
+
+                    try:
+                        for sentence in document['alt_sentences']:
+                            for word in sentence:
+                                counter[word] += 1
+                    except KeyError:
+                        pass # no translated sentence
+
+        super().__init__(counter, max_size=max_size, min_freq=min_freq)
+
+    @staticmethod
+    def load_vocab(vocab_path: str) -> 'JSONVocab':
         with open(vocab_path, "rb") as f:
             return pickle.load(f)
 

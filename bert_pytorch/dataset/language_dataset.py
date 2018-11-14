@@ -9,8 +9,8 @@ class LanguageDataset(Dataset):
     """
     pytorch dataset that loads training/test dataset for a specific language
     """
-	def __init__(self, corpus_path, vocab, language, seq_len,
-				encoding="utf-8", corpus_lines=None, on_memory=True, prob_config=None):
+    def __init__(self, corpus_path, vocab, language, seq_len,
+                encoding="utf-8", corpus_lines=None, on_memory=True, prob_config=None):
         self.vocab = vocab
         self.seq_len = seq_len
         self.language = language
@@ -47,7 +47,7 @@ class LanguageDataset(Dataset):
         return self.corpus_lines
 
     def __getitem__(self, item):
-    	sample = self.get_corpus_line(item)
+        sample = self.get_corpus_line(item)
         s1, s2, is_next = self.random_sent(sample)
         s1_random, s1_label = self.random_word(s1)
         s2_random, s2_label = self.random_word(s2)
@@ -81,20 +81,20 @@ class LanguageDataset(Dataset):
         for i, token in enumerate(sentence):
             prob = random.random()
             if prob < self.mask_prob:
-                prob random.random()
+                prob = random.random()
                 if prob < self.keep_prob: # keep same token
                     tokens[i] = self.vocab.stoi.get(token, self.vocab.unk_index)
-				elif prob < self.swap_prob: # swap with random (keep in language?)
+                elif prob < self.swap_prob: # swap with random (keep in language?)
                     tokens[i] = random.randrange(len(self.vocab))
                 else: # swap with mask
                     tokens[i] = self.vocab.mask_index
 
                 try:
-					if random.random() < self.swap_word_language_prob:
-						i = sample['text_alignment'][str(i)]
-						token = sample['alt_text'][i]
-				finally:
-					output_label.append(self.vocab.stoi.get(token, self.vocab.unk_index))
+                    if random.random() < self.swap_word_language_prob:
+                        i = sample['text_alignment'][str(i)]
+                        token = sample['alt_text'][i]
+                finally:
+                    output_label.append(self.vocab.stoi.get(token, self.vocab.unk_index))
 
             else:
                 tokens[i] = self.vocab.stoi.get(token, self.vocab.unk_index)
@@ -105,14 +105,14 @@ class LanguageDataset(Dataset):
     def random_sent(self, sample):
         split = random.randint(0, len(sample_dict['sentences'] - 1)) 
         s1 = dict((key, value[:split]) if type(value) is list else (key, value)
-        		for key, value in sample.iteritems()) # first half of segment
+                for key, value in sample.iteritems()) # first half of segment
 
         if random.random() > 0.5:
-        	s2 = dict((key, value[split:]) if type(value) is list else (key, value)
-        			for key, value in sample.iteritems()) # second half of segment
-        	return s1, s2, 1
+            s2 = dict((key, value[split:]) if type(value) is list else (key, value)
+                    for key, value in sample.iteritems()) # second half of segment
+            return s1, s2, 1
         else:
-        	return s1, self.get_random_line(), 0
+            return s1, self.get_random_line(), 0
 
     def get_corpus_line(self, item):
         if self.on_memory:

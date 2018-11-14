@@ -24,7 +24,6 @@ class LanguageDataset(Dataset):
         self.keep_prob = prob_config.keep_prob
         self.swap_prob = self.keep_prob + prob_config.swap_prob
         self.swap_word_language_prob = prob_config.swap_word_language_prob
-        self.swap_sentence_language_prob = prob_config.swap_sentence_language_prob
 
         with open(corpus_path, "r", encoding=encoding) as f:
             if self.corpus_lines is None and not on_memory:
@@ -53,29 +52,29 @@ class LanguageDataset(Dataset):
         s2_random, s2_label = self.random_word(s2)
 
         # [CLS] tag = SOS tag, [SEP] tag = EOS tag
-        t1 = [self.vocab.sos_index] + t1_random + [self.vocab.eos_index]
-        t2 = t2_random + [self.vocab.eos_index]
+        s1 = [self.vocab.sos_index] + s1_random + [self.vocab.eos_index]
+        s1 = s1_random + [self.vocab.eos_index]
 
-        t1_label = [self.vocab.pad_index] + t1_label + [self.vocab.pad_index]
-        t2_label = t2_label + [self.vocab.pad_index]
+        s1_label = [self.vocab.pad_index] + s1_label + [self.vocab.pad_index]
+        s2_label = s2_label + [self.vocab.pad_index]
 
-        segment_label = ([1 for _ in range(len(t1))] + [2 for _ in range(len(t2))])[:self.seq_len]
-        bert_input = (t1 + t2)[:self.seq_len]
-        bert_label = (t1_label + t2_label)[:self.seq_len]
+        segment_label = ([1 for _ in range(len(s1))] + [2 for _ in range(len(s2))])[:self.seq_len]
+        input_ids = (s1 + s2)[:self.seq_len]
+        token_labels = (s1_label + s2_label)[:self.seq_len]
 
-        padding = [self.vocab.pad_index for _ in range(self.seq_len - len(bert_input))]
-        bert_input.extend(padding), bert_label.extend(padding), segment_label.extend(padding)
+        padding = [self.vocab.pad_index for _ in range(self.seq_len - len(input_ids))]
+        input_ids.extend(padding), token_labels.extend(padding), segment_label.extend(padding)
 
         output = {"input_ids": input_ids,
-                  "label": bert_label,
+                  "token_labels": token_labels,
                   "segment_label": segment_label,
-                  "is_next": is_next_label,
-                  "next_language": None}
+                  "is_next": is_next_label}
 
-        return {key: torch.tensor(value) for key, value in output.items()}
+        return dict((key, torch.tensor(value)) if type(value) is not str else (key, value)
+        		for key, value in output.items())
 
     def random_word(self, sample):
-        sentence = sample['sentences']
+    	sentence= sample['sentences']
         output_label = []
 
         for i, token in enumerate(sentence):
@@ -90,11 +89,11 @@ class LanguageDataset(Dataset):
                     tokens[i] = self.vocab.mask_index
 
                 try:
-                    if random.random() < self.swap_word_language_prob:
-                        i = sample['text_alignment'][str(i)]
-                        token = sample['alt_text'][i]
-                finally:
-                    output_label.append(self.vocab.stoi.get(token, self.vocab.unk_index))
+					if random.random() < self.swap_word_language_prob:
+						i = sample['text_alignment'][str(i)]
+						token = sample['alt_sentences'][i]
+				finally:
+					output_label.append(self.vocab.stoi.get(token, self.vocab.unk_index))
 
             else:
                 tokens[i] = self.vocab.stoi.get(token, self.vocab.unk_index)
@@ -103,14 +102,14 @@ class LanguageDataset(Dataset):
         return tokens, output_label
 
     def random_sent(self, sample):
-        split = random.randint(0, len(sample_dict['sentences'] - 1)) 
-        s1 = dict((key, value[:split]) if type(value) is list else (key, value)
-                for key, value in sample.iteritems()) # first half of segment
+        split = random.randint(0, len(sample_dict['sentences'] - 1))
+        s1 = dict((key, value[split]) if type(value) is list else (key, value)
+        		for key, value in sample.items()) # first half of segment
 
         if random.random() > 0.5:
-            s2 = dict((key, value[split:]) if type(value) is list else (key, value)
-                    for key, value in sample.iteritems()) # second half of segment
-            return s1, s2, 1
+        	s2 = dict((key, value[split+1]) if type(value) is list else (key, value)
+        			for key, value in sample.items()) # second half of segment
+        	return s1, s2, 1
         else:
             return s1, self.get_random_line(), 0
 
@@ -138,4 +137,7 @@ class LanguageDataset(Dataset):
                 self.random_file.__next__()
             line = self.random_file.__next__()
 
-        return json.loads(line)
+        sample = json.loads(line)
+        split = random.randint(0, len(sample['sentences']))
+        return dict((key, value[split]) if type(value) is list else (key, value)
+        	for key, value in sample.items())

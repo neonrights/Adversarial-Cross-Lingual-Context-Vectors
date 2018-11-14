@@ -168,7 +168,7 @@ class WordVocab(Vocab):
             return pickle.load(f)
 
 
-class JSONVocab(Vocab):
+class JSONVocab(WordVocab):
     """
     Builds vocab from json encoded sentences created by corpus generators
     """
@@ -189,7 +189,7 @@ class JSONVocab(Vocab):
                     except KeyError:
                         pass # no translated sentence
 
-        super().__init__(counter, max_size=max_size, min_freq=min_freq)
+        super(WordVocab, self).__init__(counter, max_size=max_size, min_freq=min_freq)
 
     @staticmethod
     def load_vocab(vocab_path: str) -> 'JSONVocab':

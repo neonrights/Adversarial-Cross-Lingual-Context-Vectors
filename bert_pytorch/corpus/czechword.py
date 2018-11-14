@@ -33,11 +33,17 @@ class EnCzWordReader(CorpusReader):
 		for s in root:
 			english.append(s.find("english").text.split())
 			czech.append(s.find("czech").text.split())
-			alignment = [pair.split('-') for pair in s.find("sure").text.split()]
+
+			alignment = s.find("sure").text
+			if alignment is None:
+				alignment = list()
+				continue
+
+			alignment = [pair.split('-') for pair in alignment.split()]
 			if self.language == 'english':
-				text_alignment.append({int(a): int(b) for a, b in alignment})
+				text_alignment.append({int(a)-1: int(b)-1 for a, b in alignment})
 			else:
-				text_alignment.append({int(b): int(a) for a, b in alignment})
+				text_alignment.append({int(b)-1: int(a)-1 for a, b in alignment})
 		
 		if self.language == 'english':
 			return dict(zip(keys, [english, czech, text_alignment, 'czech', 'english']))

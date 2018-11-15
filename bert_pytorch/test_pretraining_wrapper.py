@@ -3,6 +3,7 @@ import torch.nn as nn
 import pdb
 
 from model import MultilingualModel, PretrainingWrapper, BERT
+from dummy_adversary import DummyAdversary
 
 
 print("Running unit tests for PretrainingWrapper...")
@@ -10,7 +11,7 @@ print("Running unit tests for PretrainingWrapper...")
 language_ids = {'en': 0, 'cz': 1, 'fr': 2, 'ch': 3, 'jp': 4}
 vocab_size = 10000
 model = MultilingualModel(language_ids, BERT, vocab_size=vocab_size, hidden=128, n_layers=6, attn_heads=16, dropout=0.5)
-pretrain_model = PretrainingWrapper(model, nn.Linear(256, 5), 256, vocab_size)
+pretrain_model = PretrainingWrapper(model, DummyAdversary(256, len(language_ids)), 256, vocab_size)
 
 assert len(model) == 5, "number of initialized objects is wrong"
 assert pretrain_model[0] is pretrain_model['en']

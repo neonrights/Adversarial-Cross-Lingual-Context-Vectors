@@ -45,6 +45,7 @@ class PretrainingSingleWrapper(nn.Module):
 		super().__init__()
 		self.model = model
 		self.adversary = adversary
+		self.hidden = hidden
 
 		# variables necessary for prediction tasks
 		self.token_linear = nn.Linear(hidden, vocab_size)
@@ -55,12 +56,11 @@ class PretrainingSingleWrapper(nn.Module):
 		
 		# logits for prediction tasks
 		token_logits = self.token_linear(context_vectors)
-		next_logits = self.next_linear(context_vectors)
-		language_logits = self.adversary(context_vectors)
+		next_logits = self.next_linear(context_vectors[:, 0])
+		language_logits = self.adversary(context_vectors[:, 0])
 
 		# public-private vector similarity loss
-		dim = context_vectors.size(-1) // 2
-		public_vectors, private_vectors = torch.split(context_vectors, dim, -1)
+		public_vectors, private_vectors = torch.split(context_vectors, self.hidden // 2, -1)
 		diff_loss = torch.bmm(private_vectors, torch.transpose(public_vectors, 2, 1))
 		diff_loss = torch.sum(diff_loss ** 2) / context_vectors.size(0)
 
@@ -71,14 +71,15 @@ class PretrainingWrapper:
 	"""
 	adds pretraining tasks to entire multilingual model
 	"""
-	def __init__(self, mutlilingual_model, adversary, vocab_size):
-		self.mutlilingual_model = multilingual_model
+	def __init__(self, multilingual_model, adversary_model, hidden, vocab_size):
+		self.multilingual_model = multilingual_model
+		self.adversary_model = adversary_model
 		# add necessary prediction task
-		self.pretraining_models = [PretrainingWrapper(model, adversary, vocab_size) for model in self.multilingual_model]
-		
+		self.pretraining_models = [PretrainingSingleWrapper(model, adversary_model, hidden, vocab_size) for model in self.multilingual_model.language_models]
+
 	def __getitem__(self, index):
 		if type(index) is str:
-			return self.pretraining_models[self.multilingual_model.ltoi(index)]
+			return self.pretraining_models[self.multilingual_model.ltoi[index]]
 		else:
 			return self.pretraining_models[index]
 	

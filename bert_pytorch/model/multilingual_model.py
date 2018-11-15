@@ -1,17 +1,26 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class PublicPrivateModel(nn.Module):
+	"""
+	shared context vector model for a single language
+	"""
 	def __init__(self, public, private):
+		super().__init__()
 		self.public = public
 		self.private = private
 	
-	def forward(self, input_ids):
-		return torch.cat([self.public(input_ids), self.private(input_ids)], -1)
+	def forward(self, *args, **kwargs):
+		return torch.cat([self.public(*args, **kwargs), self.private(*args, **kwargs)], -1)
 
 
 class MultilingualModel:
+	"""
+	Entire cross-lingual context vector model.
+	Supports indexing by language name or label to return specific language model.
+	"""
 	def __init__(self, language_ids, arch, *arch_args, **arch_kwargs):
 		self.ltoi = language_ids # language to index/label id
 		self.public_model = arch(*arch_args, **arch_kwargs)
@@ -28,8 +37,12 @@ class MultilingualModel:
 		return len(self.ltoi)
 
 
-class PretrainingWrapper(nn.Module):
+class PretrainingSingleWrapper(nn.Module):
+	"""
+	wrapper that adds pretraining prediction for a single language model
+	"""
 	def __init__(self, model, adversary, hidden, vocab_size): 
+		super().__init__()
 		self.model = model
 		self.adversary = adversary
 
@@ -37,8 +50,8 @@ class PretrainingWrapper(nn.Module):
 		self.token_linear = nn.Linear(hidden, vocab_size)
 		self.next_linear = nn.Linear(hidden, 2)
 	
-	def __forward__(self, input_ids):
-		context_vectors = self.model(input_ids)
+	def forward(self, *args, **kwargs):
+		context_vectors = self.model(*args, **kwargs)
 		
 		# logits for prediction tasks
 		token_logits = self.token_linear(context_vectors)
@@ -48,13 +61,16 @@ class PretrainingWrapper(nn.Module):
 		# public-private vector similarity loss
 		dim = context_vectors.size(-1) // 2
 		public_vectors, private_vectors = torch.split(context_vectors, dim, -1)
-
 		diff_loss = torch.bmm(private_vectors, torch.transpose(public_vectors, 2, 1))
 		diff_loss = torch.sum(diff_loss ** 2) / context_vectors.size(0)
+
 		return token_logits, next_logits, language_logits, diff_loss
 
 
-class PretrainingModel:
+class PretrainingWrapper:
+	"""
+	adds pretraining tasks to entire multilingual model
+	"""
 	def __init__(self, mutlilingual_model, adversary, vocab_size):
 		self.mutlilingual_model = multilingual_model
 		# add necessary prediction task

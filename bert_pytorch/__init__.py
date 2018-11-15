@@ -1,2 +1,4 @@
-from .model import BERT
+from .model import *
 from .corpus import *
+from .dataset import *
+from .trainer import *

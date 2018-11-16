@@ -64,6 +64,10 @@ class AdversarialPretrainer:
 
         freeze(self.model.pretraining_models + [self.model.adversary_model])
 
+        self.model.adversary_model.to(self.device)
+        for model in self.model.pretraining_models:
+            model.to(self.device)
+
         # get data
         self.train_data = train_data
         self.test_data = test_data
@@ -149,7 +153,7 @@ class AdversarialPretrainer:
                 mask_loss = self.criterion(token_logits.transpose(1,2), batch['token_labels'])
                 next_loss = self.criterion(next_logits, batch['is_next'])
                 language_labels = language_label + torch.zeros(language_logits.size(0), dtype=torch.long)
-                adv_loss = -self.criterion(language_logits, language_labels) # TODO correct loss
+                adv_loss = -self.criterion(language_logits, language_labels.to(self.device)) # TODO correct loss
 
                 if train:
                     train_loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss # unweighted sum for model comparison

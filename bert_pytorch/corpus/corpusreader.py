@@ -43,7 +43,8 @@ class CorpusReader:
 		return self.extract_sentences(self.files[index])
 
 	def __iter__(self):
-		return iter(self)
+		for file in self.files:
+			yield self.extract_sentences(file)
 
 	def close(self):
 		if self.corpus_type in {'zip', 'tar'}:

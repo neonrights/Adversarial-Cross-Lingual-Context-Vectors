@@ -1,1 +1,2 @@
-from .pretrain import BERTTrainer
+from .adversarial_model import AdversarialPretrainingWrapper
+from .adversarial_pretrain import AdversarialPretrainer

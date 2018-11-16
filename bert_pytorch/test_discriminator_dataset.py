@@ -2,6 +2,7 @@ from torch.utils.data import DataLoader
 
 from dataset import DiscriminatorDataset, JSONVocab
 
+
 print("Running unit tests for DiscriminatorDataset")
 
 vocab = JSONVocab('test_discriminator.txt')

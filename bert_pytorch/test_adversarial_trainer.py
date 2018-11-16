@@ -2,8 +2,8 @@ from torch.utils.data import DataLoader
 
 from model import BERT, MultilingualModel
 from dataset import DiscriminatorDataset, LanguageDataset, JSONVocab
-from trainer import AdversarialTrainer
-from .dummy_adversary import DummyAdversary
+from trainer import AdversarialPretrainer
+from dummy_adversary import DummyAdversary
 
 
 vocab = JSONVocab.load_vocab("test_vocab.pkl")
@@ -20,12 +20,11 @@ D_dataset = DataLoader(D_dataset, batch_size=32, shuffle=True)
 train_data = {'en': en_dataset, 'cz': cz_dataset}
 
 # initialize models
-hidden = 256
-model = MultilingualModel(BERT, vocab_size=len(vocab), hidden=hidden//2, n_layers=6, attn_heads=8, dropout=0.5)
-adversary = DummyAdversary(hidden, len(language_ids))
-
-trainer = AdversarialTrainer(model, adversary, len(vocab), len(language_ids), train_data, D_dataset, 5)
+hidden = 128
+model = MultilingualModel(language_ids, BERT, vocab_size=len(vocab), hidden=hidden//2, n_layers=3, attn_heads=8, dropout=0.5)
+adversary = DummyAdversary(hidden//2, len(language_ids))
+trainer = AdversarialPretrainer(model, adversary, len(vocab), hidden, language_ids, train_data, D_dataset, train_data, 1)
 
 for epoch in range(5):
 	trainer.train(epoch)
-	trainer.save(epoch)
+	#trainer.save(epoch)

@@ -1,12 +1,10 @@
 import os
-import path
 
 import torch
 import torch.nn as nn
-from torch.optim import Adam
+from torch.optim import Adagrad
 from torch.utils.data import DataLoader
 
-from .optim_schedule import ScheduledOptim
 from .adversarial_model import AdversarialPretrainingWrapper
 
 import tqdm
@@ -18,7 +16,7 @@ def freeze(models):
             for weight in model.parameters():
                 weight.requires_grad = False
     except TypeError:
-        for weight in model.parameters():
+        for weight in models.parameters():
             weight.requires_grad = False
 
 def thaw(models):
@@ -27,7 +25,7 @@ def thaw(models):
             for weight in model.parameters():
                 weight.requires_grad = True
     except TypeError:
-        for weight in model.parameters():
+        for weight in models.parameters():
             weight.requires_grad = True
 
 
@@ -42,8 +40,8 @@ class AdversarialPretrainer:
 
     """
 
-    def __init__(self, multilingual_model, discriminator, vocab_size: int, hidden_size, languages,
-                 train_data, discriminator_data, discriminator_repeat, test_data, alpha, beta, gamma, with_cuda=True):
+    def __init__(self, multilingual_model, adversarial_model, vocab_size: int, hidden_size, languages,
+                 train_data, discriminator_data, test_data, discriminator_repeat=5, beta=1e-2, gamma=1e-3, with_cuda=True, log_freq=100):
         """
         :param bert: BERT model which you want to train
         :param vocab_size: total word vocab size
@@ -62,26 +60,26 @@ class AdversarialPretrainer:
 
         # initialize public, private, and adversarial discriminator
         self.ltoi = languages
-        self.model = AdversarialPretrainingWrapper(multilingual_model, discriminator, vocab_size, hidden_size)
+        self.model = AdversarialPretrainingWrapper(multilingual_model, adversarial_model, hidden_size, vocab_size)
 
-        freeze(model.language_models + model.adversary_model)
+        freeze(self.model.pretraining_models + [self.model.adversary_model])
 
+        # get data
         self.train_data = train_data
         self.test_data = test_data
         self.D_data = discriminator_data
         
+        # initialize loss function and optimizers
         self.D_repeat = discriminator_repeat
+        self.criterion = nn.NLLLoss()        
+        self.D_optim = Adagrad(adversarial_model.parameters())
+        self.lm_optim = Adagrad(param for model in self.model.pretraining_models for param in model.parameters())
 
-        # initialize optimizer
-        # initialize loss functions
-        self.criterion = nn.NLLLoss()
-        
-        self.D_optim = None
-        self.lm_optim = None
-
-        self.alpha = alpha
+        # loss function hyperparameters
         self.beta = beta
         self.gamma = gamma
+
+        self.log_freq = log_freq
 
     def train(self, epoch):
         self.iteration(epoch, self.train_data)
@@ -103,35 +101,40 @@ class AdversarialPretrainer:
         str_code = "train" if train else "test"
 
         if train:
-            thaw(self.model.adversary)
+            thaw(self.model.adversary_model)
             for repeat in range(self.D_repeat):
                 # for batch in batches
                 D_iter = tqdm.tqdm(enumerate(self.D_data),
-                        desc="D_train:{}:{}/{}".format(epoch, repeat, self.D_data),
+                        desc="D_train:{}:{}/{}".format(epoch+1, repeat+1, self.D_repeat),
                         total=len(self.D_data),
                         bar_format="{l_bar}{r_bar}")
 
+                total_loss = 0
                 for i, batch in D_iter:
-                    context_vectors = self.shared_model(batch[0].to(self.device))
-                    logits = self.model.adversary_forward(batch[0].to(self.device))
-                    loss = self.nll_loss(logits, batch[1].to(self.device))
+                    logits = self.model.adversary_forward(batch[0].to(self.device),
+                            torch.zeros_like(batch[0], dtype=torch.long).to(self.device))
+                    loss = self.criterion(logits, batch[1].to(self.device))
 
                     self.D_optim.zero_grad()
                     loss.backward()
                     self.D_optim.step()
 
-            freeze(self.model.adversary)
-            thaw(self.public_model)
+                    total_loss += loss.item()
+
+                print("EP{}_D_{}: loss={}".format(epoch+1, repeat+1, total_loss / len(D_iter)))
+
+            freeze(self.model.adversary_model)
+            thaw(self.model.multilingual_model.public_model)
 
         for language, language_label in self.ltoi.items():
             language_iter = tqdm.tqdm(enumerate(data[language]),
-                    desc="{}_{}:{}".format(language, str_code, epoch),
+                    desc="{}_{}:{}".format(language, str_code, epoch+1,
                     total=len(data[language]),
-                    bat_format="{l_bar}{r_bar}")
+                    bar_format="{l_bar}{r_bar}"))
 
-            language_model = self.language_models[language]
+            language_model = self.model[language]
             if train:
-                thaw(language_model.private)
+                thaw(language_model.language_model.private)
 
             total_mask_loss = 0
             total_next_loss = 0
@@ -139,54 +142,54 @@ class AdversarialPretrainer:
             total_diff_loss = 0
             total_correct = 0
             total_elements = 0
-            language_labels = language_label + torch.zeros(data.batch_size)
             for i, batch in language_iter:
                 batch = {key: value.to(self.device) for key, value in batch.items()}
                 token_logits, next_logits, language_logits, diff_loss = language_model(batch['input_ids'], batch['segment_label'])
 
-                mask_loss = self.criterion(token_logits, batch['token_labels'])
+                mask_loss = self.criterion(token_logits.transpose(1,2), batch['token_labels'])
                 next_loss = self.criterion(next_logits, batch['is_next'])
+                language_labels = language_label + torch.zeros(language_logits.size(0), dtype=torch.long)
                 adv_loss = -self.criterion(language_logits, language_labels) # TODO correct loss
 
                 if train:
-                    train_loss = mask_loss + next_sent_loss + self.beta * D_loss + self.gamma * self.diff_loss # unweighted sum for model comparison
+                    train_loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss # unweighted sum for model comparison
                     self.lm_optim.zero_grad()
                     train_loss.backward()
                     self.lm_optim.step()
 
                 total_mask_loss += mask_loss.item()
                 total_next_loss += next_loss.item()
-                total_adv_loss += adv_loss,item()
+                total_adv_loss += adv_loss.item()
                 total_diff_loss += diff_loss.item()
                 total_correct += next_logits.argmax(dim=-1).eq(batch['is_next']).sum().item()
                 total_elements += batch['is_next'].nelement()
 
-                if i & self.log_freq == 0:
+                if i % self.log_freq == 0:
                     post_fix = {
-                        "epoch": epoch,
+                        "epoch": epoch+1,
                         "language": language,
-                        "iter": i,
+                        "iter": i+1,
                         "mask_loss": total_mask_loss / (i + 1),
                         "next_loss": total_next_loss / (i + 1),
                         "adversary_loss": total_adv_loss / (i + 1),
                         "difference_loss": total_diff_loss / (i + 1),
                         "accuracy": total_correct / total_elements
                     }
-                    data_iter.write(str(post_fix))
+                    language_iter.write(str(post_fix))
 
-            avg_mask_loss = total_mask_loss / len(language_iter)
-            avg_next_loss = total_next_loss / len(language_iter)
-            avg_adv_loss = total_adv_loss / len(language_iter)
-            avg_diff_loss = total_diff_loss / len(language_iter)
-            avg_acc = total_correct / total
+            avg_mask_loss = total_mask_loss / len(data[language])
+            avg_next_loss = total_next_loss / len(data[language])
+            avg_adv_loss = total_adv_loss / len(data[language])
+            avg_diff_loss = total_diff_loss / len(data[language])
+            avg_acc = total_correct / total_elements
             print("EP{}_{}_{}, mask={} next={} adv={} diff={}".format(
-                    epoch, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_acc))
+                    epoch+1, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_acc))
 
             if train:
-                freeze(language_model.private)
+                freeze(language_model.language_model.private)
 
         if train:
-            freeze(self.model.public_model)
+            freeze(self.model.multilingual_model.public_model)
 
 
     def save(self, epoch, directory_path="output/"):
@@ -197,7 +200,7 @@ class AdversarialPretrainer:
         :param directory_path: model output path which gonna be file_path+"ep%d" % epoch
         :return: final_output_path
         """
-        directory_path = path.join(directory_path, str(epoch))
+        directory_path = os.path.join(directory_path, str(epoch))
         if not os.isdir(directory_path):
             os.mkdir(directory_path)
 

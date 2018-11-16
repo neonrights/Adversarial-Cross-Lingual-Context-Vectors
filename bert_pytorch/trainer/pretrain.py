@@ -3,8 +3,7 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
-from ..model import BERTLM, BERT
-from .optim_schedule import ScheduledOptim
+from optim_schedule import ScheduledOptim
 
 import tqdm
 

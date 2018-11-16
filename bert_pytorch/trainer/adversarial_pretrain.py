@@ -1,4 +1,5 @@
 import os
+import json
 
 import torch
 import torch.nn as nn
@@ -41,7 +42,8 @@ class AdversarialPretrainer:
     """
 
     def __init__(self, multilingual_model, adversarial_model, vocab_size: int, hidden_size, languages,
-                 train_data, discriminator_data, test_data, discriminator_repeat=5, beta=1e-2, gamma=1e-3, with_cuda=True, log_freq=100):
+                 train_data, discriminator_data, test_data, discriminator_repeat=5, beta=1e-2, gamma=1e-3,
+                 with_cuda=True, log_freq=100, log_file="training.log"):
         """
         :param bert: BERT model which you want to train
         :param vocab_size: total word vocab size
@@ -84,6 +86,7 @@ class AdversarialPretrainer:
         self.gamma = gamma
 
         self.log_freq = log_freq
+        self.log_file = log_file
 
     def train(self, epoch):
         self.iteration(epoch, self.train_data)
@@ -125,7 +128,7 @@ class AdversarialPretrainer:
 
                     total_loss += loss.item()
 
-                print("EP{}_D_{}: loss={}".format(epoch+1, repeat+1, total_loss / len(D_iter)))
+                print("EP{0}_D_{1}: loss={2:.6f}".format(epoch+1, repeat+1, total_loss / len(D_iter)))
 
             freeze(self.model.adversary_model)
             thaw(self.model.multilingual_model.public_model)
@@ -179,14 +182,16 @@ class AdversarialPretrainer:
                         "difference_loss": total_diff_loss / (i + 1),
                         "accuracy": total_correct / total_elements
                     }
-                    language_iter.write(str(post_fix))
+                    with open(self.log_file, 'a') as f:
+                        f.write(json.dumps(post_fix) + '\n')
+
 
             avg_mask_loss = total_mask_loss / len(data[language])
             avg_next_loss = total_next_loss / len(data[language])
             avg_adv_loss = total_adv_loss / len(data[language])
             avg_diff_loss = total_diff_loss / len(data[language])
             avg_acc = total_correct / total_elements
-            print("EP{}_{}_{}, mask={} next={} adv={} diff={}".format(
+            print("EP{0}_{1}_{2}, mask={3:.6f} next={4:.6f} adv={5:.6f} diff={6:.6f}".format(
                     epoch+1, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_acc))
 
             if train:

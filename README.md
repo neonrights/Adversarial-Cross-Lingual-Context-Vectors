@@ -38,13 +38,13 @@ Test scripts currently use the czech-english word aligned corpus available [here
 
 ## Contributing
 
-Extending data generation, corpus readers, and tokenizers. [link](corpus/README.md)
+Extending data generation, corpus readers, and tokenizers. [link](crosslingual_bert/corpus/README.md)
 
-Extending vocab and pytorch datasets. [link](dataset/README.md)
+Extending vocab and pytorch datasets. [link](crosslingual_bert/dataset/README.md)
 
-Extending embeddings, attention, and shared-private models. [link](model/README.md)
+Extending embeddings, attention, and shared-private models. [link](crosslingual_bert/model/README.md)
 
-Extending pretraining tasks and optimizers. [link](trainer/README.md)
+Extending pretraining tasks and optimizers. [link](crosslingual_bert/trainer/README.md)
 
 ## Coding References
 [BERT-pytorch](https://github.com/codertimo/BERT-pytorch)

@@ -2,9 +2,9 @@ import argparse
 
 from torch.utils.data import DataLoader
 
-from .model import BERT
-from .trainer import BERTTrainer
-from .dataset import BERTDataset, WordVocab
+from model import BERT
+from trainer import BERTTrainer
+from dataset import BERTDataset, WordVocab
 
 
 def train():

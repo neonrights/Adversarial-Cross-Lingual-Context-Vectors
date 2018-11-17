@@ -51,9 +51,12 @@ class DiscriminatorDataset(Dataset):
         input_ids = [self.vocab.sos_index] + input_ids + [self.vocab.eos_index]
         input_ids = input_ids[:self.seq_len]
         padding = [self.vocab.pad_index for _ in range(self.seq_len - len(input_ids))]
+        mask = [1 for _ in range(len(input_ids))] + [0 for _ in range(len(padding))]
         input_ids.extend(padding)
 
-        return torch.tensor(input_ids), torch.tensor(label)
+        return {"input_ids": torch.tensor(input_ids),
+                "language_label": torch.tensor(label),
+                "mask": torch.tensor(mask)}
 
     def get_corpus_line(self, item):
         if self.on_memory:

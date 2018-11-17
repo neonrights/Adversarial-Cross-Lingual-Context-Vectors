@@ -1,3 +1,3 @@
-from .adversarial_model import AdversarialPretrainingWrapper
+from .adversarial_wrapper import AdversarialBERTWrapper
 from .adversarial_pretrain import AdversarialPretrainer
 from .language_model import BERTLM, NextSentencePrediction, MaskedLanguageModel

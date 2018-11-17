@@ -8,4 +8,4 @@ class DummyAdversary(nn.Module):
 		self.softmax = nn.LogSoftmax(dim=-1)
 
 	def forward(self, inputs):
-		return self.softmax(self.linear(inputs[:, 0]))
+		return self.softmax(self.linear(inputs))

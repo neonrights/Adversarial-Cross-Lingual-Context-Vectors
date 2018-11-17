@@ -78,11 +78,14 @@ class LanguageDataset(Dataset):
         token_labels = (s1_label + s2_label)[:self.seq_len]
 
         padding = [self.vocab.pad_index for _ in range(self.seq_len - len(input_ids))]
+        mask = [1 for _ in range(len(input_ids))] + [0 for _ in range(len(padding))]
         input_ids.extend(padding), token_labels.extend(padding), segment_label.extend(padding)
+        
         output = {"input_ids": input_ids,
                   "token_labels": token_labels,
                   "segment_label": segment_label,
-                  "is_next": is_next}
+                  "is_next": is_next,
+                  "mask": mask}
 
         return dict((key, torch.tensor(value)) if type(value) is not str else (key, value)
                 for key, value in output.items())

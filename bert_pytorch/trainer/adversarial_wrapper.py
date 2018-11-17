@@ -4,7 +4,7 @@ import torch.nn as nn
 from .language_model import NextSentencePrediction, MaskedLanguageModel
 import pdb
 
-class AdversarialLanguageWrapper(nn.Module):
+class SingleBERTWrapper(nn.Module):
 	"""
 	wrapper that adds pretraining prediction for a single language model
 	"""
@@ -17,24 +17,29 @@ class AdversarialLanguageWrapper(nn.Module):
 		self.hidden = hidden
 	
 	def forward(self, *args, **kwargs):
-		context_vectors = self.language_model(*args, **kwargs)
+		hidden_vectors, pooled_vectors = self.language_model(*args, **kwargs)
 		
 		# logits for prediction tasks
-		token_logits = self.mask_model(context_vectors)
-		next_logits = self.next_model(context_vectors)
+		token_logits = self.mask_model(hidden_vectors[-1])
+		next_logits = self.next_model(pooled_vectors)
 
 		# public-private vector similarity loss
-		public_vectors, private_vectors = torch.split(context_vectors, self.hidden // 2, -1)
-		diff_loss = torch.bmm(private_vectors, torch.transpose(public_vectors, 2, 1))
-		diff_loss = torch.sum(diff_loss ** 2) / context_vectors.size(0)
+		diff_loss = 0
+		for hidden_vector in hidden_vectors:
+			public_vectors, private_vectors = torch.split(hidden_vector, self.hidden // 2, -1)
+			diff = torch.bmm(private_vectors, torch.transpose(public_vectors, 1, 2))
+			diff_loss += torch.sum(diff ** 2)
+
+		diff_loss /= pooled_vectors.size(0)
 
 		# adversarial prediction
-		language_logits = self.adversary_model(public_vectors)
+		public_pooled, _ = torch.split(pooled_vectors, self.hidden // 2, -1)
+		language_logits = self.adversary_model(public_pooled)
 
 		return token_logits, next_logits, language_logits, diff_loss
 
 
-class AdversarialPretrainingWrapper:
+class AdversarialBERTWrapper:
 	"""
 	adds pretraining tasks to entire multilingual model
 	"""
@@ -44,7 +49,7 @@ class AdversarialPretrainingWrapper:
 		self.mask_model = MaskedLanguageModel(hidden, vocab_size)
 		self.next_model = NextSentencePrediction(hidden)
 		# add necessary prediction task
-		self.pretraining_models = [AdversarialLanguageWrapper(model, adversary_model, self.mask_model, self.next_model, hidden)
+		self.pretraining_models = [SingleBERTWrapper(model, adversary_model, self.mask_model, self.next_model, hidden)
 				for model in self.multilingual_model.language_models]
 
 	def __getitem__(self, index):
@@ -57,6 +62,13 @@ class AdversarialPretrainingWrapper:
 		return len(self.multilingual_model)
 
 	def adversary_forward(self, *args, **kwargs):
-		context_vectors = self.multilingual_model.public_model(*args, **kwargs)
-		return self.adversary_model(context_vectors)
+		_, pooled_vectors = self.multilingual_model.public_model(*args, **kwargs)
+		return self.adversary_model(pooled_vectors)
+
+	def get_components(self):
+		components = self.multilingual_model.get_components()
+		components['adversary'] = self.adversary_model
+		components['mask_prediction'] = self.mask_model
+		components['is_next_prediction'] = self.next_model
+		return components		
 

@@ -1,8 +1,9 @@
+import torch
 import torch.nn as nn
 
 from .transformer import TransformerBlock
 from .embedding import BERTEmbedding
-
+import pdb
 
 class BERT(nn.Module):
     """
@@ -33,9 +34,12 @@ class BERT(nn.Module):
         self.transformer_blocks = nn.ModuleList(
             [TransformerBlock(hidden, attn_heads, hidden * 4, dropout) for _ in range(n_layers)])
 
-    def forward(self, x, segment_info):
+    def forward(self, x, segment_info=None):
         # attention masking for padded token
         # torch.ByteTensor([batch_size, 1, seq_len, seq_len)
+        if segment_info is None:
+            segment_info = torch.zeros_like(x)
+
         mask = (x > 0).unsqueeze(1).repeat(1, x.size(1), 1).unsqueeze(1)
 
         # embedding the indexed sequence to sequence of vectors

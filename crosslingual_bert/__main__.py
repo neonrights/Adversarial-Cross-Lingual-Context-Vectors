@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import os.path as path
 import argparse
 
@@ -11,61 +12,64 @@ from trainer import *
 
 def generate_data(args):
 	parser = argparse.ArgumentParser(description="Samples sequences of sentences from a specified corpus or corpora.")
-	parser.add_argument('-c', '--corpus', required=True, type=str, nargs='+', help="supported corpus or list of corpora")
-	parser.add_argument('-l', '--language', type=str, default=None, help="language corpora belong to")
-	parser.add_argument('-a', '--adversary', action='store_true', help="flag that corpora belong to adversary")
-	parser.add_argument('--length', type=int, default=512, help="max number of tokens in a sample")
-	parser.add_argument('-o', '--output', type=str, default=None, help="name of output file (default name of language or adversary)")
+	parser.add_argument('-c', '--corpus-config', required=True, type=str, help="supported corpus or list of corpora")
+	parser.add_argument('--max-length', type=int, default=512, help="max number of tokens in a sample")
+	parser.add_argument('-o', '--output', type=str, default='sampled_data', help="name of output directory")
 	parser.add_argument('-r', '--random', action='store_true', help="whether to randomly sample from each corpus")
 	parser.add_argument('-s', '--samples', type=int, default=1000, help="number of random samples to draw from each corpus")
 	config = parser.parse_args(args)
 
 	corpus_names = {
 		"en-cz-word-aligned": EnCzWordReader(path.join('.', sys.path[0],
-			"archives/CzEnAli_1.0.tar.gz"), language='english'),
+			"data/CzEnAli_1.0.tar.gz"), language='english'),
 		"cz-en-word-aligned": EnCzWordReader(path.join('.', sys.path[0],
-			"archives/CzEnAli_1.0.tar.gz"), language='czech')
+			"data/CzEnAli_1.0.tar.gz"), language='czech')
 		# add support for new corpora here
 	}
 
 	config_name = "dataset.config"
-	for name in config.corpus:
-		try:
-			reader = corpus_names[name]		
-		except KeyError:
-			print("{} is an unsupported corpus, try one of:".format(config.corpus))
-			for name in corpus_names:
-				print("\t{}".format(name))
-			exit()
+	if config.output is None:
+		output_file = config.language + '.txt'
+	else:
+		output_file = config.output
 
-		if config.adversary:
-			pass			
-		else:
-			generator = LanguageSequenceGenerator(name, config.length)
+	with open(output_file, 'w+') as f_out:
+		for name in config.corpus:
+			try:
+				reader = corpus_names[name]
+			except KeyError:
+				print("{} is an unsupported corpus, try one of:".format(config.corpus))
+				for name in corpus_names:
+					print("\t{}".format(name))
+				exit()
+
+			generator = LanguageSequenceGenerator(name, config.max_length)
 			if config.random:
-				generator.random_samples(config.samples, "tmp/temp.txt")
+				# append output to file
+				for sample in generator.random_samples(config.samples):
+					f_out.write(sample)
 			else:
-				generator.sequential_sample("tmp/temp.txt")
-
+				for sample in generator.sequential_samples():
+					f_out.write(sample)
 
 
 def pretrain(args):
 	parser = argparse.ArgumentParser(description="Runs pretraining tasks")
 	parser.add_argument('-b', "--batch", type=int, default=32, help="batch size")
 	parser.add_argument('-v', "--vocab", type=str, default="vocab.pkl", help="vocab file, or output name if none exists")
+	parser.add_argument("--dataset-config", required=True, type=str, help="file specifying language and their datasets")
 	parser.add_argument("--layers", type=int, default=6, help="number of hidden layers")
 	parser.add_argument("--hidden", type=int, default=384, help="dimension of hidden layer (must be even)")
 	parser.add_argument("--intermediate", type=int, default=1536, help="dimension of intermediate attention layers")
-	parser.add_argument("--max_seq_len", type=int, default=512, help="maximum length of sequence")
+	parser.add_argument("--max-seq-len", type=int, default=512, help="maximum length of sequence")
 	parser.add_argument("--heads", type=int, default=12, help="number of attention heads")
 	parser.add_argument("--dropout", type=int, default=0.1, help="probability of dropout")
 	parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
-	parser.add_argument("--loss_beta", type=float, default=1e-2, help="adversarial loss weight")
-	parser.add_argument("--loss_gamma", type=float, default=1e-4, help="orthogonal distance loss weight")
+	parser.add_argument("--loss-beta", type=float, default=1e-2, help="adversarial loss weight")
+	parser.add_argument("--loss-gamma", type=float, default=1e-4, help="orthogonal distance loss weight")
 	parser.add_argument("--epochs", type=int, default=100, help="number of epochs")
-	parser.add_argument("--datasets", required=True, type=str, help="file specifying language and their datasets")
 	parser.add_argument("--checkpoint", type=str, default='checkpoint', help="checkpoint directory")
-	parser.add_argument("--save_freq", type=int, default=10, help="frequency of save checkpoints")
+	parser.add_argument("--save-freq", type=int, default=10, help="frequency of save checkpoints")
 	config = parser.parse_args(args)
 
 	# load dataset arrangement

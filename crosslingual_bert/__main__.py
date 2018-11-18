@@ -1,71 +1,142 @@
+import os
+import sys
+import os.path as path
 import argparse
 
-from torch.utils.data import DataLoader
+from corpus import *
+from dataset import *
+from model import *
+from trainer import *
 
-from model import BERT
-from trainer import BERTTrainer
-from dataset import BERTDataset, WordVocab
+
+def generate_data(args):
+	parser = argparse.ArgumentParser(description="Samples sequences of sentences from a specified corpus or corpora.")
+	parser.add_argument('-c', '--corpus', required=True, type=str, nargs='+', help="supported corpus or list of corpora")
+	parser.add_argument('-l', '--language', type=str, default=None, help="language corpora belong to")
+	parser.add_argument('-a', '--adversary', action='store_true', help="flag that corpora belong to adversary")
+	parser.add_argument('--length', type=int, default=512, help="max number of tokens in a sample")
+	parser.add_argument('-o', '--output', type=str, default=None, help="name of output file (default name of language or adversary)")
+	parser.add_argument('-r', '--random', action='store_true', help="whether to randomly sample from each corpus")
+	parser.add_argument('-s', '--samples', type=int, default=1000, help="number of random samples to draw from each corpus")
+	config = parser.parse_args(args)
+
+	corpus_names = {
+		"en-cz-word-aligned": EnCzWordReader(path.join('.', sys.path[0],
+			"archives/CzEnAli_1.0.tar.gz"), language='english'),
+		"cz-en-word-aligned": EnCzWordReader(path.join('.', sys.path[0],
+			"archives/CzEnAli_1.0.tar.gz"), language='czech')
+		# add support for new corpora here
+	}
+
+	config_name = "dataset.config"
+	for name in config.corpus:
+		try:
+			reader = corpus_names[name]		
+		except KeyError:
+			print("{} is an unsupported corpus, try one of:".format(config.corpus))
+			for name in corpus_names:
+				print("\t{}".format(name))
+			exit()
+
+		if config.adversary:
+			pass			
+		else:
+			generator = LanguageSequenceGenerator(name, config.length)
+			if config.random:
+				generator.random_samples(config.samples, "tmp/temp.txt")
+			else:
+				generator.sequential_sample("tmp/temp.txt")
 
 
-def train():
-    parser = argparse.ArgumentParser()
 
-    parser.add_argument("-c", "--train_dataset", required=True, type=str, help="train dataset for train bert")
-    parser.add_argument("-t", "--test_dataset", type=str, default=None, help="test set for evaluate train set")
-    parser.add_argument("-v", "--vocab_path", required=True, type=str, help="built vocab model path with bert-vocab")
-    parser.add_argument("-o", "--output_path", required=True, type=str, help="ex)output/bert.model")
+def pretrain(args):
+	parser = argparse.ArgumentParser(description="Runs pretraining tasks")
+	parser.add_argument('-b', "--batch", type=int, default=32, help="batch size")
+	parser.add_argument('-v', "--vocab", type=str, default="vocab.pkl", help="vocab file, or output name if none exists")
+	parser.add_argument("--layers", type=int, default=6, help="number of hidden layers")
+	parser.add_argument("--hidden", type=int, default=384, help="dimension of hidden layer (must be even)")
+	parser.add_argument("--intermediate", type=int, default=1536, help="dimension of intermediate attention layers")
+	parser.add_argument("--max_seq_len", type=int, default=512, help="maximum length of sequence")
+	parser.add_argument("--heads", type=int, default=12, help="number of attention heads")
+	parser.add_argument("--dropout", type=int, default=0.1, help="probability of dropout")
+	parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
+	parser.add_argument("--loss_beta", type=float, default=1e-2, help="adversarial loss weight")
+	parser.add_argument("--loss_gamma", type=float, default=1e-4, help="orthogonal distance loss weight")
+	parser.add_argument("--epochs", type=int, default=100, help="number of epochs")
+	parser.add_argument("--datasets", required=True, type=str, help="file specifying language and their datasets")
+	parser.add_argument("--checkpoint", type=str, default='checkpoint', help="checkpoint directory")
+	parser.add_argument("--save_freq", type=int, default=10, help="frequency of save checkpoints")
+	config = parser.parse_args(args)
 
-    parser.add_argument("-hs", "--hidden", type=int, default=256, help="hidden size of transformer model")
-    parser.add_argument("-l", "--layers", type=int, default=8, help="number of layers")
-    parser.add_argument("-a", "--attn_heads", type=int, default=8, help="number of attention heads")
-    parser.add_argument("-s", "--seq_len", type=int, default=20, help="maximum sequence len")
+	# load dataset arrangement
 
-    parser.add_argument("-b", "--batch_size", type=int, default=64, help="number of batch_size")
-    parser.add_argument("-e", "--epochs", type=int, default=10, help="number of epochs")
-    parser.add_argument("-w", "--num_workers", type=int, default=5, help="dataloader worker size")
+	# load or create vocabulary
+	if path.isfile(config.vocab):
+		vocab = JSONVocab.load_vocab(config.vocab)
+	else:
+		vocab = JSONVocab(datasets)
+		vocab.save_vocab(config.vocab)
 
-    parser.add_argument("--with_cuda", type=bool, default=True, help="training with CUDA: true, or false")
-    parser.add_argument("--log_freq", type=int, default=10, help="printing loss every n iter: setting n")
-    parser.add_argument("--corpus_lines", type=int, default=None, help="total number of lines in corpus")
-    parser.add_argument("--cuda_devices", type=int, nargs='+', default=None, help="CUDA device ids")
-    parser.add_argument("--on_memory", type=bool, default=True, help="Loading on memory: true or false")
+	# load language dataset
+	language_ids = {'en': 0, 'cz': 1}
 
-    parser.add_argument("--lr", type=float, default=1e-3, help="learning rate of adam")
-    parser.add_argument("--adam_weight_decay", type=float, default=0.01, help="weight_decay of adam")
-    parser.add_argument("--adam_beta1", type=float, default=0.9, help="adam first beta value")
-    parser.add_argument("--adam_beta2", type=float, default=0.999, help="adam first beta value")
+	en_dataset = LanguageDataset("test_english.txt", vocab, language='en', seq_len=128)
+	cz_dataset = LanguageDataset("test_czech.txt", vocab, language='cz', seq_len=128)
+	D_dataset = DiscriminatorDataset("test_discriminator.txt", vocab, language_ids, seq_len=128)
 
-    args = parser.parse_args()
+	en_dataset = DataLoader(en_dataset, batch_size=config.batch_size, shuffle=True)
+	cz_dataset = DataLoader(cz_dataset, batch_size=config.batch_size, shuffle=True)
+	D_dataset = DataLoader(D_dataset, batch_size=config.batch_size, shuffle=True)
 
-    print("Loading Vocab", args.vocab_path)
-    vocab = WordVocab.load_vocab(args.vocab_path)
-    print("Vocab Size: ", len(vocab))
+	train_data = {'en': en_dataset, 'cz': cz_dataset}
 
-    print("Loading Train Dataset", args.train_dataset)
-    train_dataset = BERTDataset(args.train_dataset, vocab, seq_len=args.seq_len,
-                                corpus_lines=args.corpus_lines, on_memory=args.on_memory)
+	# initialize model
+	config = BertConfig(vocab_size=len(vocab),
+			hidden_size=config.hidden//2,
+			num_hidden_layers=config.layers,
+			num_attention_heads=config.head,
+			intermediate_size=config.intermediate,
+			max_position_embeddings=config.max_seq_len)
 
-    print("Loading Test Dataset", args.test_dataset)
-    test_dataset = BERTDataset(args.test_dataset, vocab, seq_len=args.seq_len, on_memory=args.on_memory) \
-        if args.test_dataset is not None else None
+	model = MultilingualBERT(language_ids, BertModel, config)
+	adversary = SimpleAdversary(config.hidden//2, len(language_ids))
+	trainer = AdversarialPretrainer(model, adversary, len(vocab), hidden, language_ids, train_data, D_dataset, train_data, 5, beta=0.1, gamma=1e-9)
 
-    print("Creating Dataloader")
-    train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.num_workers)
-    test_data_loader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=args.num_workers) \
-        if test_dataset is not None else None
+	best_loss = 1e9
+	for epoch in range(1000):
+		trainer.train(epoch)
+		test_loss = trainer.test(epoch)
 
-    print("Building BERT model")
-    bert = BERT(len(vocab), hidden=args.hidden, n_layers=args.layers, attn_heads=args.attn_heads)
+		# perform checkpoints
+		if test_loss < best_loss:
+			trainer.save(epoch, directory="best")
 
-    print("Creating BERT Trainer")
-    trainer = BERTTrainer(bert, len(vocab), train_dataloader=train_data_loader, test_dataloader=test_data_loader,
-                          lr=args.lr, betas=(args.adam_beta1, args.adam_beta2), weight_decay=args.adam_weight_decay,
-                          with_cuda=args.with_cuda, cuda_devices=args.cuda_devices, log_freq=args.log_freq)
+		if (epoch+1) % config.save_freq == 0:
+			trainer.save(epoch)
 
-    print("Training Start")
-    for epoch in range(args.epochs):
-        trainer.train(epoch)
-        trainer.save(epoch, args.output_path)
 
-        if test_data_loader is not None:
-            trainer.test(epoch)
+def evaluate(args):
+	parser = argparse.ArgumentParser(description="Runs evaluation script for a fully trained model.")
+	parser.add_argument('-m', "--model", required=True, type=str, help="directory of saved model")
+	parser.add_argument('-t', "--test", type=str, default=None, help="test to run, fun all tests by default")
+	parser.add_argument('-o', "--output", type=str, default='tests', help="output directory for test results")
+	config = parser.parse_args(args)
+
+	raise NotImplementedError
+
+
+if __name__ == '__main__':
+	try:
+		if sys.argv[1] == "corpus":
+			generate_data(sys.argv[2:])
+		elif sys.argv[1] == "pretrain":
+			pretrain(sys.argv[2:])
+		elif sys.argv[1] == "evaluate":
+			evaluate(sys.argv[2:])
+		else:
+			print("{} is an invalid module. Try corpus, pretrain, or evaluate.\
+					For help with a module, invoke it.".format(sys.argv[1]))
+	except IndexError:
+		print("No module specified. Try corpus, pretrain, or evaluate.\
+					For help with a module, invoke it.")
+

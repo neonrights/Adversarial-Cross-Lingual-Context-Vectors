@@ -1,9 +1,8 @@
 from torch.utils.data import DataLoader
 
-from model import BertConfig, BertModel, MultilingualBERT
+from model import BertConfig, BertModel, MultilingualBERT, SimpleAdversary
 from dataset import DiscriminatorDataset, LanguageDataset, JSONVocab
 from trainer import AdversarialPretrainer
-from dummy_adversary import DummyAdversary
 
 
 vocab = JSONVocab.load_vocab("test_vocab.pkl")
@@ -29,7 +28,7 @@ config = BertConfig(vocab_size=len(vocab),
 		max_position_embeddings=256)
 
 model = MultilingualBERT(language_ids, BertModel, config)
-adversary = DummyAdversary(hidden//2, len(language_ids))
+adversary = SimpleAdversary(hidden//2, len(language_ids))
 trainer = AdversarialPretrainer(model, adversary, len(vocab), hidden, language_ids, train_data, D_dataset, train_data, 5, beta=0.1, gamma=1e-9)
 
 for epoch in range(1000):

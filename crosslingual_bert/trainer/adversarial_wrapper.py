@@ -24,12 +24,9 @@ class SingleBERTWrapper(nn.Module):
 		next_logits = self.next_model(pooled_vectors)
 
 		# public-private vector similarity loss
-		diff_loss = 0
-		for hidden_vector in hidden_vectors:
-			public_vectors, private_vectors = torch.split(hidden_vector, self.hidden // 2, -1)
-			diff = torch.bmm(private_vectors, torch.transpose(public_vectors, 1, 2))
-			diff_loss += torch.sum(diff ** 2)
-
+		public_vectors, private_vectors = torch.split(hidden_vectors[-1], self.hidden // 2, -1)
+		diff = torch.bmm(private_vectors, torch.transpose(public_vectors, 1, 2))
+		diff_loss = torch.sum(diff ** 2)
 		diff_loss /= pooled_vectors.size(0)
 
 		# adversarial prediction

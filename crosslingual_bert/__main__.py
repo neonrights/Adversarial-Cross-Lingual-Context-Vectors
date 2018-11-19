@@ -3,12 +3,13 @@ import sys
 import json
 import os.path as path
 import argparse
+from torch.utils.data import DataLoader
 
 from corpus import *
 from dataset import *
 from model import *
 from trainer import *
-import pdb
+
 
 def generate_data(args):
 	parser = argparse.ArgumentParser(description="Samples sequences of sentences from a specified corpus or corpora.")
@@ -101,8 +102,10 @@ def pretrain(args):
 
 	# load or create vocabulary
 	if path.isfile(config.vocab):
+		print("Loading vocabulary...")
 		vocab = JSONVocab.load_vocab(config.vocab)
 	else:
+		print("Building vocabulary...")
 		vocab = JSONVocab(train_files.values())
 		vocab.save_vocab(config.vocab)
 
@@ -110,12 +113,12 @@ def pretrain(args):
 	language_ids = {language: i for i, language in enumerate(languages)}
 
 	# load language dataset
-	train_datasets = dict((key, LanguageDataset(value, vocab, language=language, seq_len=config.max_seq_len))
-			if key is not "adversary" else DiscriminatorDataset(value, vocab, language_ids, seq_len=config.max_seq_len)
+	train_datasets = dict((key, LanguageDataset(value, vocab, language=key, seq_len=config.max_seq_len))
+			if key != "adversary" else (key, DiscriminatorDataset(value, vocab, language_ids, seq_len=config.max_seq_len))
 			for key, value in train_files.items())
 
-	test_datasets = dict((key, LanguageDataset(value, vocab, language=language, seq_len=config.max_seq_len))
-			if key is not "adversary" else DiscriminatorDataset(value, vocab, language_ids, seq_len=config.max_seq_len)
+	test_datasets = dict((key, LanguageDataset(value, vocab, language=key, seq_len=config.max_seq_len))
+			if key != "adversary" else (key, DiscriminatorDataset(value, vocab, language_ids, seq_len=config.max_seq_len))
 			for key, value in train_files.items())
 
 	# wrap each dataset in a dataloader
@@ -123,14 +126,15 @@ def pretrain(args):
 	test_datasets = {key: DataLoader(value, batch_size=config.batch, shuffle=config.shuffle) for key, value in test_datasets.items()}
 
 	# initialize model
-	config = BertConfig(vocab_size=len(vocab),
+	bert_config = BertConfig(
+			vocab_size=len(vocab),
 			hidden_size=config.hidden//2,
 			num_hidden_layers=config.layers,
-			num_attention_heads=config.head,
+			num_attention_heads=config.heads,
 			intermediate_size=config.intermediate,
 			max_position_embeddings=config.max_seq_len)
 
-	model = MultilingualBERT(language_ids, BertModel, config)
+	model = MultilingualBERT(language_ids, BertModel, bert_config)
 	adversary = SimpleAdversary(config.hidden//2, len(language_ids))
 	trainer = AdversarialPretrainer(
 			multilingual_model=model,
@@ -138,8 +142,8 @@ def pretrain(args):
 			vocab_size=len(vocab),
 			hidden_size=config.hidden,
 			languages=language_ids,
-			train_data=train_data,
-			test_data=test_data,
+			train_data=train_datasets,
+			test_data=test_datasets,
 			adv_repeat=config.repeat_adv,
 			beta=config.loss_beta,
 			gamma=config.loss_gamma,

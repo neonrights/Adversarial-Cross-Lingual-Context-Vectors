@@ -42,7 +42,7 @@ class AdversarialPretrainer:
 
     """
 
-    def __init__(self, multilingual_model, adversarial_model, vocab_size: int, hidden_size, languages,
+    def __init__(self, multilingual_model, adversary_model, vocab_size: int, hidden_size, languages,
                  train_data, test_data, adv_repeat=5, beta=1e-2, gamma=1e-4,
                  with_cuda=True, log_freq=10):
         """
@@ -63,7 +63,7 @@ class AdversarialPretrainer:
 
         # initialize public, private, and adversarial discriminator
         self.ltoi = languages
-        self.model = AdversarialBERTWrapper(multilingual_model, adversarial_model, hidden_size, vocab_size)
+        self.model = AdversarialBERTWrapper(multilingual_model, adversary_model, hidden_size, vocab_size)
 
         freeze(self.model.pretraining_models + [self.model.adversary_model])
 
@@ -76,11 +76,11 @@ class AdversarialPretrainer:
         self.test_data = test_data
         
         # initialize loss function and optimizers
-        self.D_repeat = discriminator_repeat
+        self.D_repeat = adv_repeat
         self.criterion = nn.NLLLoss()   
         self.mask_criterion = nn.NLLLoss(ignore_index=0)     
-        self.D_optim = Adam(adversarial_model.parameters())
-        self.lm_optim = BERTAdam([param for model in self.model.pretraining_models for param in model.parameters()], 1e-4)
+        self.D_optim = Adam(adversary_model.parameters())
+        self.lm_optim = BERTAdam([param for model in self.model.get_components().values() for param in model.parameters()], 1e-4)
 
         # loss function hyperparameters
         self.beta = beta
@@ -112,20 +112,21 @@ class AdversarialPretrainer:
 
         for repeat in range(self.D_repeat):
             # for batch in batches
-            D_iter = tqdm.tqdm(enumerate(self.data["adversary"]),
+            D_iter = tqdm.tqdm(enumerate(data["adversary"]),
                     desc="D_train:{}:{}/{}".format(epoch+1, repeat+1, self.D_repeat),
-                    total=len(self.D_data),
+                    total=len(data["adversary"]),
                     bar_format="{l_bar}{r_bar}")
 
             total_loss = 0
+            total_correct = 0
+            total_elements = 0
             for i, batch in D_iter:
                 batch = {key: value.to(self.device) for key, value in batch.items()}
-
                 logits = self.model.adversary_forward(batch["input_ids"], attention_mask=batch['mask'])
                 loss = self.criterion(logits, batch['language_label'])
-                total_correct += logits.argmax(-1).eq(batch['language_label']).sum().item()
                 
                 total_loss += loss.item()
+                total_correct += logits.argmax(-1).eq(batch['language_label']).sum().item()
                 total_elements += batch['language_label'].nelement()
 
                 if train:

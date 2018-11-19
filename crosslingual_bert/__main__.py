@@ -71,8 +71,10 @@ def generate_data(args):
 def pretrain(args):
 	parser = argparse.ArgumentParser(description="Runs pretraining tasks")
 	parser.add_argument('-b', "--batch", type=int, default=32, help="batch size")
+	parser.add_argument('-s', "--shuffle", action="store_true", help="shuffle batches")
 	parser.add_argument('-v', "--vocab", type=str, default="vocab.pkl", help="vocab file, or output name if none exists")
-	parser.add_argument("-d", "--dataset-config", required=True, type=str, help="file specifying language and their datasets")
+	parser.add_argument("--train-data", required=True, type=str, help="file specifying training data for each language")
+	parser.add_argument("--test-data", required=True, type=str, help="file specifying test data for each language")
 	parser.add_argument("--layers", type=int, default=6, help="number of hidden layers")
 	parser.add_argument("--hidden", type=int, default=384, help="dimension of hidden layer (must be even)")
 	parser.add_argument("--intermediate", type=int, default=1536, help="dimension of intermediate attention layers")
@@ -80,33 +82,45 @@ def pretrain(args):
 	parser.add_argument("--heads", type=int, default=12, help="number of attention heads")
 	parser.add_argument("--dropout", type=int, default=0.1, help="probability of dropout")
 	parser.add_argument("--learning-rate", type=float, default=1e-4, help="learning rate")
+	parser.add_argument("--repeat-adv", type=int, default=5, help="number of times adversary is trained every epoch")
 	parser.add_argument("--loss-beta", type=float, default=1e-2, help="adversarial loss weight")
 	parser.add_argument("--loss-gamma", type=float, default=1e-4, help="orthogonal distance loss weight")
 	parser.add_argument("--epochs", type=int, default=100, help="number of epochs")
 	parser.add_argument("--checkpoint", type=str, default='checkpoint', help="checkpoint directory")
 	parser.add_argument("--save-freq", type=int, default=10, help="frequency of save checkpoints")
+	parser.add_argument("--log-freq", type=int, default=1000, help="frequency of log of metrics")
+	parser.add_argument("--gpu", action="store_true", help="use gpu to train")
 	config = parser.parse_args(args)
 
 	# load dataset arrangement
+	with open(config.train_data, 'r') as f_in:
+		train_files = json.load(f_in)
+
+	with open(config.test_data, 'r') as f_in:
+		test_files = json.load(f_in)
 
 	# load or create vocabulary
 	if path.isfile(config.vocab):
 		vocab = JSONVocab.load_vocab(config.vocab)
 	else:
-		vocab = JSONVocab(datasets)
+		vocab = JSONVocab(train_files.values())
 		vocab.save_vocab(config.vocab)
 
+	languages = [language for language in train_files if language != "adversary"]
+	language_ids = {language: i for i, language in enumerate(languages)}
+
 	# load language dataset
+	train_datasets = dict((key, LanguageDataset(value, vocab, language=language, seq_len=config.max_seq_len))
+			if key is not "adversary" else DiscriminatorDataset(value, vocab, language_ids, seq_len=config.max_seq_len)
+			for key, value in train_files.items())
 
-	en_dataset = LanguageDataset("test_english.txt", vocab, language='en', seq_len=128)
-	cz_dataset = LanguageDataset("test_czech.txt", vocab, language='cz', seq_len=128)
-	D_dataset = DiscriminatorDataset("discriminator.txt", vocab, language_ids, seq_len=128)
+	test_datasets = dict((key, LanguageDataset(value, vocab, language=language, seq_len=config.max_seq_len))
+			if key is not "adversary" else DiscriminatorDataset(value, vocab, language_ids, seq_len=config.max_seq_len)
+			for key, value in train_files.items())
 
-	en_dataset = DataLoader(en_dataset, batch_size=config.batch_size, shuffle=True)
-	cz_dataset = DataLoader(cz_dataset, batch_size=config.batch_size, shuffle=True)
-	D_dataset = DataLoader(D_dataset, batch_size=config.batch_size, shuffle=True)
-
-	train_data = {'en': en_dataset, 'cz': cz_dataset}
+	# wrap each dataset in a dataloader
+	train_datasets = {key: DataLoader(value, batch_size=config.batch, shuffle=config.shuffle) for key, value in train_datasets.items()}
+	test_datasets = {key: DataLoader(value, batch_size=config.batch, shuffle=config.shuffle) for key, value in test_datasets.items()}
 
 	# initialize model
 	config = BertConfig(vocab_size=len(vocab),
@@ -118,7 +132,19 @@ def pretrain(args):
 
 	model = MultilingualBERT(language_ids, BertModel, config)
 	adversary = SimpleAdversary(config.hidden//2, len(language_ids))
-	trainer = AdversarialPretrainer(model, adversary, len(vocab), hidden, language_ids, train_data, D_dataset, train_data, 5, beta=0.1, gamma=1e-9)
+	trainer = AdversarialPretrainer(
+			multilingual_model=model,
+			adversary_model=adversary,
+			vocab_size=len(vocab),
+			hidden_size=config.hidden,
+			languages=language_ids,
+			train_data=train_data,
+			test_data=test_data,
+			adv_repeat=config.repeat_adv,
+			beta=config.loss_beta,
+			gamma=config.loss_gamma,
+			with_cuda=config.gpu,
+			log_freq=config.log_freq)
 
 	best_loss = 1e9
 	for epoch in range(1000):

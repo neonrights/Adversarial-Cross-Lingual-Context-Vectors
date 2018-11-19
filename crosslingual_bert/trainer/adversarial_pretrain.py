@@ -43,7 +43,7 @@ class AdversarialPretrainer:
     """
 
     def __init__(self, multilingual_model, adversarial_model, vocab_size: int, hidden_size, languages,
-                 train_data, discriminator_data, test_data, discriminator_repeat=5, beta=1e-2, gamma=1e-4,
+                 train_data, test_data, adv_repeat=5, beta=1e-2, gamma=1e-4,
                  with_cuda=True, log_freq=10):
         """
         :param bert: BERT model which you want to train
@@ -74,7 +74,6 @@ class AdversarialPretrainer:
         # get data
         self.train_data = train_data
         self.test_data = test_data
-        self.D_data = discriminator_data
         
         # initialize loss function and optimizers
         self.D_repeat = discriminator_repeat
@@ -110,32 +109,42 @@ class AdversarialPretrainer:
 
         if train:
             thaw(self.model.adversary_model)
-            for repeat in range(self.D_repeat):
-                # for batch in batches
-                D_iter = tqdm.tqdm(enumerate(self.D_data),
-                        desc="D_train:{}:{}/{}".format(epoch+1, repeat+1, self.D_repeat),
-                        total=len(self.D_data),
-                        bar_format="{l_bar}{r_bar}")
 
-                total_loss = 0
-                for i, batch in D_iter:
-                    batch = {key: value.to(self.device) for key, value in batch.items()}
+        for repeat in range(self.D_repeat):
+            # for batch in batches
+            D_iter = tqdm.tqdm(enumerate(self.data["adversary"]),
+                    desc="D_train:{}:{}/{}".format(epoch+1, repeat+1, self.D_repeat),
+                    total=len(self.D_data),
+                    bar_format="{l_bar}{r_bar}")
 
-                    logits = self.model.adversary_forward(batch["input_ids"], attention_mask=batch['mask'])
-                    loss = self.criterion(logits, batch['language_label'])
+            total_loss = 0
+            for i, batch in D_iter:
+                batch = {key: value.to(self.device) for key, value in batch.items()}
 
+                logits = self.model.adversary_forward(batch["input_ids"], attention_mask=batch['mask'])
+                loss = self.criterion(logits, batch['language_label'])
+                total_correct += logits.argmax(-1).eq(batch['language_label']).sum().item()
+                
+                total_loss += loss.item()
+                total_elements += batch['language_label'].nelement()
+
+                if train:
                     self.D_optim.zero_grad()
                     loss.backward()
                     self.D_optim.step()
 
-                    total_loss += loss.item()
+            print("EP{0}_D_{1}: loss={2:.6f} acc={3:.6f}".format(
+                    epoch+1, repeat+1, total_loss / len(D_iter), total_correct / total_elements))
 
-                print("EP{0}_D_{1}: loss={2:.6f}".format(epoch+1, repeat+1, total_loss / len(D_iter)))
-
+        if train:
             freeze(self.model.adversary_model)
             thaw(self.model.multilingual_model.public_model)
 
+        micro_loss = 0
         for language, language_label in self.ltoi.items():
+            if language == "adversary":
+                continue
+
             language_iter = tqdm.tqdm(enumerate(data[language]),
                     desc="{}_{}:{}".format(language, str_code, epoch+1,
                     total=len(data[language]),
@@ -162,18 +171,19 @@ class AdversarialPretrainer:
                 language_labels = language_label + torch.zeros(language_logits.size(0), dtype=torch.long)
                 adv_loss = -self.criterion(language_logits, language_labels.to(self.device)) # TODO correct loss
 
+                train_loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss
                 if train:
-                    train_loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss # unweighted sum for model comparison
                     self.lm_optim.zero_grad()
                     train_loss.backward()
                     self.lm_optim.step()
 
+                micro_loss += train_loss.item()
                 total_mask_loss += mask_loss.item()
                 total_next_loss += next_loss.item()
                 total_adv_loss += adv_loss.item()
                 total_diff_loss += diff_loss.item()
                 
-                mask_correct = mask_logits.argmax(dim=-1).eq(batch['token_labels'])
+                mask_correct = mask_logits.argmax(-1).eq(batch['token_labels'])
                 mask_elements = (batch['token_labels'] > 0)
                 total_mask_correct += (mask_correct & mask_elements).sum().item()
                 total_mask_elements += mask_elements.sum().item()
@@ -217,6 +227,8 @@ class AdversarialPretrainer:
 
         if train:
             freeze(self.model.multilingual_model.public_model)
+
+        return micro_loss / (len(data) - 1)
 
 
     def save(self, epoch, directory_path="output/"):

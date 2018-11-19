@@ -17,7 +17,7 @@ class EnCzWordReader(CorpusReader):
 		self.language = language
 
 	def extract_sentences(self, file):
-		print(file)
+		# print(file)
 		if self.corpus_type == 'dir':
 			tree = ET.parse(file)
 			root = tree.getroot()

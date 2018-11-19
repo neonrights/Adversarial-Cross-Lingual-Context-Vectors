@@ -1,4 +1,4 @@
 from .corpusreader import BadCorpusError
-from .czechword import *
-from .discriminator_generator import *
-from .language_generator import *
+from .czechword import EnCzWordReader
+from .discriminator_generator import DiscriminatorSequenceGenerator
+from .language_generator import LanguageSequenceGenerator

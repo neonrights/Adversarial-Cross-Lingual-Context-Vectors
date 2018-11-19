@@ -14,8 +14,8 @@ class LanguageSequenceGenerator:
 		self.max_seq_len = max_seq_len
 		self.corpus = corpus
 	
-	def random_samples(self, n_samples, out_path):
-		with open(out_path, 'w+') as f_out:
+	def random_samples(self, n_samples, out_path=None):
+		if out_path is None:
 			for i in range(n_samples):
 				document = random.choice(self.corpus)
 				sample = self.sample_sentences(document)
@@ -24,12 +24,24 @@ class LanguageSequenceGenerator:
 					print("Failed to write {} samples, got to {}".format(n_samples, i+1))
 					break
 
-				f_out.write(json.dumps(sample) + '\n')
+				yield json.dumps(sample) + '\n'
+		else:
+			# write directly to file otherwise
+			with open(out_path, 'w+') as f_out:
+				for i in range(n_samples):
+					document = random.choice(self.corpus)
+					sample = self.sample_sentences(document)
 
-		print("generated {} samples to {}".format(n_samples, out_path))
+					if sample is None:
+						print("Failed to write {} samples, got to {}".format(n_samples, i+1))
+						break
 
-	def sequential_samples(self, out_path):
-		with open(out_path, 'w+') as f_out:
+					f_out.write(json.dumps(sample) + '\n')
+
+			print("\tgenerated {} samples".format(n_samples))
+
+	def sequential_samples(self, out_path=None):
+		if out_path is None:
 			for i, document in enumerate(self.corpus):
 				sample = self.sample_sentences(document)
 
@@ -37,9 +49,20 @@ class LanguageSequenceGenerator:
 					print("Failed to sample from all documents, got to {}".format(i+1))
 					break
 
-				f_out.write(json.dumps(sample) + '\n')
+				yield json.dumps(sample) + '\n'
+		else:
+			# write directly to file otherwise
+			with open(out_path, 'w+') as f_out:
+				for i, document in enumerate(self.corpus):
+					sample = self.sample_sentences(document)
 
-		print("generated {} samples to {}".format(i, out_path))
+					if sample is None:
+						print("Failed to sample from all documents, got to {}".format(i+1))
+						break
+
+					f_out.write(json.dumps(sample) + '\n')
+
+		print("\tgenerated {} samples".format(i))
 
 	def sample_sentences(self, document):
 		start = random.randint(0, len(document) - 5)

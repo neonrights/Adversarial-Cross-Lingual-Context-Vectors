@@ -8,7 +8,7 @@ from corpus import *
 from dataset import *
 from model import *
 from trainer import *
-
+import pdb
 
 def generate_data(args):
 	parser = argparse.ArgumentParser(description="Samples sequences of sentences from a specified corpus or corpora.")
@@ -17,9 +17,10 @@ def generate_data(args):
 	parser.add_argument('-o', '--output', type=str, default='sampled_data', help="name of output directory")
 	parser.add_argument('-r', '--random', action='store_true', help="whether to randomly sample from each corpus")
 	parser.add_argument('-s', '--samples', type=int, default=1000, help="number of random samples to draw from each corpus")
+	parser.add_argument('--adv-samples', type=int, default=1000, help="number of random samples to draw for adversary")
 	config = parser.parse_args(args)
 
-	corpus_names = {
+	name_to_reader = {
 		"en-cz-word-aligned": EnCzWordReader(path.join('.', sys.path[0],
 			"data/CzEnAli_1.0.tar.gz"), language='english'),
 		"cz-en-word-aligned": EnCzWordReader(path.join('.', sys.path[0],
@@ -27,44 +28,58 @@ def generate_data(args):
 		# add support for new corpora here
 	}
 
-	config_name = "dataset.config"
-	if config.output is None:
-		output_file = config.language + '.txt'
-	else:
-		output_file = config.output
+	with open(config.corpus_config, 'r') as f_in:
+		corpus_config = json.load(f_in)
 
-	with open(output_file, 'w+') as f_out:
-		for name in config.corpus:
-			try:
-				reader = corpus_names[name]
-			except KeyError:
-				print("{} is an unsupported corpus, try one of:".format(config.corpus))
-				for name in corpus_names:
-					print("\t{}".format(name))
-				exit()
+	# convert names to readers
+	try:
+		corpus_config = {key: [name_to_reader[name] for name in value] for key, value in corpus_config.items()}
+	except KeyError:
+		print("Unsupported corpus, try one of:")
+		for key in name_to_reader:
+			print("\t" + key)
+		exit()
 
-			generator = LanguageSequenceGenerator(name, config.max_length)
-			if config.random:
-				# append output to file
-				for sample in generator.random_samples(config.samples):
-					f_out.write(sample)
-			else:
-				for sample in generator.sequential_samples():
-					f_out.write(sample)
+	if not path.isdir(config.output):
+		os.mkdir(config.output)
+
+	dataset_config = dict()
+	for language, corpus_readers in corpus_config.items():
+		dataset_config[language] = path.join(config.output, language + '.txt')
+		with open(dataset_config[language], 'w+') as f_out:
+			for reader in corpus_readers:
+				generator = LanguageSequenceGenerator(reader, config.max_length)
+				if config.random:
+					# append output to file
+					for sample in generator.random_samples(config.samples):
+						f_out.write(sample)
+				else:
+					for sample in generator.sequential_samples():
+						f_out.write(sample)
+
+		print("Generated dataset for {}.".format(language))
+
+	dataset_config['adversary'] = path.join(config.output, "adversary.txt")
+	generator = DiscriminatorSequenceGenerator(corpus_config, config.max_length)
+	generator.random_samples(config.samples, dataset_config['adversary'])
+	print("Generated dataset for adversary.")
+
+	with open("dataset.config", 'w+') as f_out:
+		json.dump(dataset_config, f_out)
 
 
 def pretrain(args):
 	parser = argparse.ArgumentParser(description="Runs pretraining tasks")
 	parser.add_argument('-b', "--batch", type=int, default=32, help="batch size")
 	parser.add_argument('-v', "--vocab", type=str, default="vocab.pkl", help="vocab file, or output name if none exists")
-	parser.add_argument("--dataset-config", required=True, type=str, help="file specifying language and their datasets")
+	parser.add_argument("-d", "--dataset-config", required=True, type=str, help="file specifying language and their datasets")
 	parser.add_argument("--layers", type=int, default=6, help="number of hidden layers")
 	parser.add_argument("--hidden", type=int, default=384, help="dimension of hidden layer (must be even)")
 	parser.add_argument("--intermediate", type=int, default=1536, help="dimension of intermediate attention layers")
 	parser.add_argument("--max-seq-len", type=int, default=512, help="maximum length of sequence")
 	parser.add_argument("--heads", type=int, default=12, help="number of attention heads")
 	parser.add_argument("--dropout", type=int, default=0.1, help="probability of dropout")
-	parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
+	parser.add_argument("--learning-rate", type=float, default=1e-4, help="learning rate")
 	parser.add_argument("--loss-beta", type=float, default=1e-2, help="adversarial loss weight")
 	parser.add_argument("--loss-gamma", type=float, default=1e-4, help="orthogonal distance loss weight")
 	parser.add_argument("--epochs", type=int, default=100, help="number of epochs")
@@ -82,11 +97,10 @@ def pretrain(args):
 		vocab.save_vocab(config.vocab)
 
 	# load language dataset
-	language_ids = {'en': 0, 'cz': 1}
 
 	en_dataset = LanguageDataset("test_english.txt", vocab, language='en', seq_len=128)
 	cz_dataset = LanguageDataset("test_czech.txt", vocab, language='cz', seq_len=128)
-	D_dataset = DiscriminatorDataset("test_discriminator.txt", vocab, language_ids, seq_len=128)
+	D_dataset = DiscriminatorDataset("discriminator.txt", vocab, language_ids, seq_len=128)
 
 	en_dataset = DataLoader(en_dataset, batch_size=config.batch_size, shuffle=True)
 	cz_dataset = DataLoader(cz_dataset, batch_size=config.batch_size, shuffle=True)

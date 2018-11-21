@@ -1,4 +1,4 @@
-import json
+import pickle
 import random
 
 
@@ -17,9 +17,9 @@ class DiscriminatorSequenceGenerator:
 		self.language_corpora = language_corpora
 
 	def random_samples(self, n_samples, out_path):
-		with open(out_path, 'w+') as f_out:
+		with open(out_path, 'wb+') as f_out:
 			for i in range(n_samples):
-				f_out.write(json.dumps(self.sample_sentence()) + '\n')
+				f_out.write(pickle.dumps(self.sample_sentence()) + '\n')
 
 	def sample_sentence(self):
 		language = random.choice(self.languages)

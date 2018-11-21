@@ -1,4 +1,4 @@
-import json
+import pickle
 import random
 
 
@@ -24,10 +24,10 @@ class LanguageSequenceGenerator:
 					print("Failed to write {} samples, got to {}".format(n_samples, i+1))
 					break
 
-				yield json.dumps(sample) + '\n'
+				yield pickle.dumps(sample) + '\n'
 		else:
 			# write directly to file otherwise
-			with open(out_path, 'w+') as f_out:
+			with open(out_path, 'wb+') as f_out:
 				for i in range(n_samples):
 					document = random.choice(self.corpus)
 					sample = self.sample_sentences(document)
@@ -36,7 +36,7 @@ class LanguageSequenceGenerator:
 						print("Failed to write {} samples, got to {}".format(n_samples, i+1))
 						break
 
-					f_out.write(json.dumps(sample) + '\n')
+					f_out.write(pickle.dumps(sample) + '\n')
 
 			print("\tgenerated {} samples".format(n_samples))
 
@@ -49,10 +49,10 @@ class LanguageSequenceGenerator:
 					print("Failed to sample from all documents, got to {}".format(i+1))
 					break
 
-				yield json.dumps(sample) + '\n'
+				yield pickle.dumps(sample) + '\n'
 		else:
 			# write directly to file otherwise
-			with open(out_path, 'w+') as f_out:
+			with open(out_path, 'wb+') as f_out:
 				for i, document in enumerate(self.corpus):
 					sample = self.sample_sentences(document)
 
@@ -60,7 +60,7 @@ class LanguageSequenceGenerator:
 						print("Failed to sample from all documents, got to {}".format(i+1))
 						break
 
-					f_out.write(json.dumps(sample) + '\n')
+					f_out.write(pickle.dumps(sample) + '\n')
 
 		print("\tgenerated {} samples".format(i))
 

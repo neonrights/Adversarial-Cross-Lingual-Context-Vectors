@@ -2,7 +2,7 @@ from torch.utils.data import Dataset
 import tqdm
 import torch
 import random
-import json
+import pickle
 
 
 class ProbConfig:
@@ -46,7 +46,7 @@ class LanguageDataset(Dataset):
                     self.corpus_lines += 1
 
             if on_memory:
-                self.lines = [json.loads(line)
+                self.lines = [pickle.loads(line)
                               for line in tqdm.tqdm(f, desc="Loading Dataset", total=corpus_lines)]
                 self.corpus_lines = len(self.lines)
 
@@ -142,7 +142,7 @@ class LanguageDataset(Dataset):
                 self.file = open(self.corpus_path, "r", encoding=self.encoding)
                 line = self.file.__next__()
 
-            return json.loads(line)
+            return pickle.loads(line)
 
     def get_random_line(self):
         if self.on_memory:
@@ -156,7 +156,7 @@ class LanguageDataset(Dataset):
                     self.random_file.__next__()
                 line = self.random_file.__next__()
             
-            sample = json.loads(line)
+            sample = pickle.loads(line)
         
         split = random.randrange(len(sample['sentences']))
         return dict((key, value[split]) if type(value) is list else (key, value)

@@ -28,9 +28,9 @@ class MultilingualBERT:
 	"""
 	def __init__(self, language_ids, arch, *arch_args, **arch_kwargs):
 		self.ltoi = language_ids # language to index/label id
-		self.public_model = arch(*arch_args, **arch_kwargs)
-		self.private_models = [arch(*arch_args, **arch_kwargs) for _ in range(len(language_ids))]
-		self.language_models = [PublicPrivateBERT(self.public_model, private_model) for private_model in self.private_models]
+		self.models = {"public": arch(*arch_args, **arch_kwargs),
+			"private": [language: arch(*arch_args, **arch_kwargs) for language in language_ids]}
+		self.language_models = [PublicPrivateBERT(self.models['public'], model) for model in self.models['private']]
 	
 	def __getitem__(self, index):
 		if type(index) is str:
@@ -42,7 +42,4 @@ class MultilingualBERT:
 		return len(self.ltoi)
 
 	def get_components(self):
-		# returns all sub-models and names
-		components = {language: self.private_models[index] for language, index in self.ltoi.items()}
-		components['public'] = self.public_model
-		return components
+		return self.models

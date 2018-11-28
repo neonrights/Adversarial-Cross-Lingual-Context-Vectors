@@ -114,8 +114,7 @@ class AdversarialPretrainer:
             # for batch in batches
             D_iter = tqdm.tqdm(enumerate(data["adversary"]),
                     desc="D_train:{}:{}/{}".format(epoch+1, repeat+1, self.D_repeat),
-                    total=len(data["adversary"]),
-                    bar_format="{l_bar}{r_bar}")
+                    total=len(data["adversary"]))
 
             total_loss = 0
             total_correct = 0
@@ -148,8 +147,7 @@ class AdversarialPretrainer:
 
             language_iter = tqdm.tqdm(enumerate(data[language]),
                     desc="{}_{}:{}".format(language, str_code, epoch+1,
-                    total=len(data[language]),
-                    bar_format="{l_bar}{r_bar}"))
+                    total=len(data[language])))
 
             language_model = self.model[language]
             if train:

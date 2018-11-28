@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from .language_model import NextSentencePrediction, MaskedLanguageModel
-import pdb
+
 
 class SingleBERTWrapper(nn.Module):
 	"""
@@ -41,13 +41,14 @@ class AdversarialBERTWrapper:
 	adds pretraining tasks to entire multilingual model
 	"""
 	def __init__(self, multilingual_model, adversary_model, hidden, vocab_size):
-		self.multilingual_model = multilingual_model
-		self.adversary_model = adversary_model
-		self.mask_model = MaskedLanguageModel(hidden, vocab_size)
-		self.next_model = NextSentencePrediction(hidden)
+		self.models = multilingual_model.models.copy()
+		self.models['adversary'] = adversary_model
+		self.models['mask'] = MaskedLanguageModel(hidden, vocab_size)
+		self.models['next'] = NextSentencePrediction(hidden)
 		# add necessary prediction task
-		self.pretraining_models = [SingleBERTWrapper(model, adversary_model, self.mask_model, self.next_model, hidden)
-				for model in self.multilingual_model.language_models]
+		self.pretraining_models = [SingleBERTWrapper(self.models[language],
+				self.models['adversary'], self.models['mask'], self.models['next'],
+				hidden) for language in self.multilingual_model.ltoi]
 
 	def __getitem__(self, index):
 		if type(index) is str:
@@ -63,9 +64,5 @@ class AdversarialBERTWrapper:
 		return self.adversary_model(pooled_vectors)
 
 	def get_components(self):
-		components = self.multilingual_model.get_components()
-		components['adversary'] = self.adversary_model
-		components['mask_prediction'] = self.mask_model
-		components['is_next_prediction'] = self.next_model
-		return components		
+		return self.models		
 

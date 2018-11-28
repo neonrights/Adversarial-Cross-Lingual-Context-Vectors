@@ -29,7 +29,7 @@ class MultilingualBERT:
 	def __init__(self, language_ids, arch, *arch_args, **arch_kwargs):
 		self.ltoi = language_ids # language to index/label id
 		self.models = {"public": arch(*arch_args, **arch_kwargs),
-			"private": [language: arch(*arch_args, **arch_kwargs) for language in language_ids]}
+			"private": [arch(*arch_args, **arch_kwargs) for language in language_ids]}
 		self.language_models = [PublicPrivateBERT(self.models['public'], model) for model in self.models['private']]
 	
 	def __getitem__(self, index):

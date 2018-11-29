@@ -3,17 +3,16 @@ import torch
 import tqdm
 
 
-class XNLITrainer:
-	def __init__(self, model, train_data, test_data, with_cuda=True):
+class EvaluateXNLI:
+	def __init__(self, model, xnli_data, languages, target_language, with_cuda=True):
 
 		cuda_condition = torch.cuda.is_available() and with_cuda
         self.device = torch.device("cuda:0" if cuda_condition else "cpu")
 
-		# wrap model to produce prediction tasks
+		# complete translation model with prediction
 		self.model = model
 		# load train and test data
-		self.train_data = train_data
-		self.test_data = test_data
+
 
 	def train(self, epoch):
 		return self.iteration(epoch, self.train_data)

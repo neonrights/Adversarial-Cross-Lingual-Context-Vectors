@@ -124,14 +124,28 @@ class Decoder(nn.Module):
 		return all_encoder_layers
 
 
+class MixtureOfExperts(nn.Module):
+	def __init__(self, input_dim, output_dim, expert_count):
+		self.linear = nn.Linear(input_dim, output_dim * expert_count)
+		self.expert_gate = nn.Linear(input_dim, expert_count)
+		self.output_dim = output_dim
+		self.expert_count = expert_count
+
+	def forward(self, input_vectors):
+		logits = self.linear(input_vectors).reshape(-1, self.output_dim, self.input_dim)
+		activations = nn.Softmax(dim=-1)(self.expert_gate(input_vectors)).unsqueeze(-1)
+		return torch.bmm(logits, activations).squeeze()
+
+
 class TranslatorModel(nn.Module):
-	def __init__(self, config: BertConfig):
+	def __init__(self, config: BertConfig, experts):
 		super().__init__()
-		self.embeddings = PosWordEmbeddings(config)
 		self.decoder = Decoder(config)
 		self.pooler = BERTPooler(config)
+		self.dropout = nn.Dropout(config.hidden_dropout_prob)
+		self.linear = nn.Linear(config.hidden_size, config.vocab_size)
 
-	def forward(self, encoder_vectors, decoder_ids, encoder_mask=None, decoder_mask=None):
+	def forward(self, encoder_vectors, decoder_vectors, encoder_mask=None, decoder_mask=None):
 		if encoder_mask is None:
 			encoder_mask = torch.ones(encoder_vectors.shape[:-1], dtype=torch.long)
 		if decoder_mask is None:
@@ -142,9 +156,9 @@ class TranslatorModel(nn.Module):
 		attention_mask = attention_mask.unsqueeze(1).to(dtype=next(self.parameters()).dtype)
 		attention_mask = (1.0 - attention_mask) * -10000.0
 
-		decoder_embeddings = self.embeddings(decoder_ids)
-		all_decoder_layers = self.decoder(encoder_vectors, decoder_embeddings, attention_mask)
+		all_decoder_layers = self.decoder(encoder_vectors, decoder_vectors, attention_mask)
 		sequence_output = all_decoder_layers[-1]
-		pooled_output = self.pooler(sequence_output)
-		return all_decoder_layers, pooled_output
+		pooled_output = self.dropout(self.pooler(sequence_output))
+		logits = nn.LogSoftmax(dim=-1)(self.linear(pooled_output))
+		return logits
 

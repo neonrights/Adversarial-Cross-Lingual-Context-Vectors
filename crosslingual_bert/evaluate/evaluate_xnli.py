@@ -5,11 +5,28 @@ import tqdm
 
 
 def batch_BLEU(predicted, truth, predicted_mask=None, truth_mask=None, weights=(0.25, 0.25, 0.25, 0.25)):
+	if predicted_mask is None:
+		predicted_mask = torch.zeros_like(predicted)
+	else:
+		predicted_mask = ~predicted_mask
+
+	if truth_mask is None:
+		truth_mask = torch.zeros_like(truth_mask)
+	else:
+		truth_mask = ~truth_mask
+
 	# calculates BLEU score given a bunch of ids
 	scores = torch.zeros(predicted.size(0))
-	for n, weight in enumerate(weights):
-		n += 1
+	stats = truth.unsqueeze(1) == predicted.unsqueeze(2)
+	lengths = predicted_mask.sum(-1)
+
+	for weight in weights:
 		# calculate BLEU score for each sample in batch at once
+		scores += weight * stats.any(-1).sum(-1) / lengths
+		stats = stats[:,:-1,:-1] & stats[:,1:,1:]
+		lengths -= 1
+
+	return scores
 
 
 class EvaluateXNLI:

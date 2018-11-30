@@ -29,13 +29,14 @@ class EvaluateXNLI:
 
 	def evaluate(self, data_loader, save_file=None):
 		# optimization and prediction
-		data_iter = tqdm.tqdm(enumerate(data_loader), desc="XNLI BLEU", total=len(data_loader))
+		data_iter = tqdm.tqdm(enumerate(data_loader),
+				desc="BLEU XX-{}".format(self.target_language), total=len(data_loader))
 		total_scores, total_counts = Counter(), Counter()
 
 		for i, batch in data_iter:
 			batch = {key: value.to(self.device) for key, value in batch.items()}
-			# forward iteration with mixture of experts	
 
+			# calculate translations and BLEU scores for each language
 			ground_truth = batch[self.target_language]
 			for language in self.languages:
 				token_ids, token_masks = batch[language], batch[language + "_mask"]
@@ -52,7 +53,7 @@ class EvaluateXNLI:
 					token_logits = self.model[language](token_ids, translations, token_masks, translation_mask)
 					token_predictions = logits.argmax(dim=-1)
 					translations[:,i] = token_predictions
-					seen_eos = seen_eos & token_predictions == (self.vocab.eos_index)
+					seen_eos = seen_eos | token_predictions == (self.vocab.eos_index)
 					translation_mask[:,i] = seen_eos
 
 				# calculate BLEU scores

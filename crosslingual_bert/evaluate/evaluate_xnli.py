@@ -17,7 +17,6 @@ def batch_BLEU(predicted, truth, predicted_mask=None, truth_mask=None, weights=(
 
 	# calculates BLEU score given a bunch of ids
 	scores = torch.ones(predicted.size(0))
-	no_ngram = torch.ones(predicted.size(0), dtype=torch.uint8)
 	combined_mask = truth_mask.unsqueeze(1) & predicted_mask.unsqueeze(2)
 	stats = (truth.unsqueeze(1) == predicted.unsqueeze(2)) & combined_mask
 
@@ -29,12 +28,11 @@ def batch_BLEU(predicted, truth, predicted_mask=None, truth_mask=None, weights=(
 	for weight in weights:
 		# calculate BLEU score for each sample in batch at once
 		ngram_scores = stats.any(-1).sum(-1)
-		no_ngram &= ngram_scores > 0
 		scores *= (ngram_scores.to(torch.float) / lengths) ** weight
 		stats = stats[:,:-1,:-1] & stats[:,1:,1:]
 		lengths = torch.max(lengths - 1, torch.ones_like(lengths))
 
-	return length_penalty * scores * no_ngram.to(torch.float)
+	return length_penalty * scores
 
 
 class EvaluateXNLI:

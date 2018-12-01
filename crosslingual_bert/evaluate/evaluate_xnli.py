@@ -61,8 +61,11 @@ class EvaluateXNLI:
 
 			# calculate translations and BLEU scores for each language
 			ground_truth = batch[self.target_language]
+			truth_mask = ground_truth == self.vocab.pad_index
+			truth_bleu_mask = truth_mask | (ground_truth == self.vocab.sos_index) | (ground_truth == self.vocab.eos_index)
 			for language in self.languages:
-				token_ids, token_masks = batch[language], batch[language + "_mask"]
+				token_ids = batch[language]
+				token_masks = token_ids == self.vocab.pad_index
 
 				translations = torch.empty_like(ground_truth)
 				translations[:,0] = self.vocab.sos_index
@@ -81,7 +84,7 @@ class EvaluateXNLI:
 
 				# calculate BLEU scores
 				translation_mask[:,0] = 1
-				scores = batch_BLEU(translations, ground_truth, translation_mask, truth_mask)
+				scores = batch_BLEU(translations, ground_truth, translation_mask, truth_bleu_mask)
 
 				BLEU_scores[language] += scores.sum().item()
 				sample_counts[language] += scores.nelements()

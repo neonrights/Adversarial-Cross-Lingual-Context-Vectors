@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from os import path
 
 
-class PublicPrivateBERT(nn.Module):
+class PublicPrivateBert(nn.Module):
 	"""
 	shared context vector model for a single language
 	"""
@@ -21,7 +21,7 @@ class PublicPrivateBERT(nn.Module):
 		return hidden_vectors, pooled_vectors
 
 
-class MultilingualBERT:
+class MultilingualBert:
 	"""
 	Entire cross-lingual context vector model.
 	Supports indexing by language name or label to return specific language model.
@@ -30,7 +30,7 @@ class MultilingualBERT:
 		self.ltoi = language_ids # language to index/label id
 		self.models = {"public": arch(*arch_args, **arch_kwargs),
 			"private": [arch(*arch_args, **arch_kwargs) for language in language_ids]}
-		self.language_models = [PublicPrivateBERT(self.models['public'], model) for model in self.models['private']]
+		self.language_models = [PublicPrivateBert(self.models['public'], model) for model in self.models['private']]
 	
 	def __getitem__(self, index):
 		if type(index) is str:

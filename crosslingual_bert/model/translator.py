@@ -1,3 +1,4 @@
+import copy
 import torch
 import torch.nn
 
@@ -138,7 +139,7 @@ class MixtureOfExperts(nn.Module):
 
 
 class TranslatorModel(nn.Module):
-	def __init__(self, config: BertConfig, experts):
+	def __init__(self, config: BertConfig):
 		super().__init__()
 		self.decoder = Decoder(config)
 		self.pooler = BERTPooler(config)
@@ -147,9 +148,9 @@ class TranslatorModel(nn.Module):
 
 	def forward(self, encoder_vectors, decoder_vectors, encoder_mask=None, decoder_mask=None):
 		if encoder_mask is None:
-			encoder_mask = torch.ones(encoder_vectors.shape[:-1], dtype=torch.long)
+			encoder_mask = torch.ones(encoder_vectors.shape[:-1], dtype=torch.uint8)
 		if decoder_mask is None:
-			decoder_mask = torch.ones_like(decoder_ids)
+			decoder_mask = torch.ones(decoder_vectors.shape[:-1], dtype=torch.uint8)
 		
 		# combine masks for each sequence into single attention mask matrix
 		attention_mask = torch.bmm(decoder_mask.unsqueeze(2), encoder_mask.unsqueeze(1))

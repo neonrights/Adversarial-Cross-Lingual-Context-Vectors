@@ -6,27 +6,33 @@ import tqdm
 
 def batch_BLEU(predicted, truth, predicted_mask=None, truth_mask=None, weights=(0.25, 0.25, 0.25, 0.25)):
 	if predicted_mask is None:
-		predicted_mask = torch.zeros_like(predicted)
+		predicted_mask = torch.ones_like(predicted, dtype=torch.uint8)
 	else:
-		predicted_mask = ~predicted_mask
+		predicted_mask = ~predicted_mask.to(torch.uint8)
 
 	if truth_mask is None:
-		truth_mask = torch.zeros_like(truth_mask)
+		truth_mask = torch.ones_like(truth, dtype=torch.uint8)
 	else:
-		truth_mask = ~truth_mask
+		truth_mask = ~truth_mask.to(torch.uint8)
 
 	# calculates BLEU score given a bunch of ids
-	scores = torch.zeros(predicted.size(0))
-	stats = truth.unsqueeze(1) == predicted.unsqueeze(2)
-	lengths = predicted_mask.sum(-1)
+	scores = torch.ones(predicted.size(0))
+	combined_mask = truth_mask.unsqueeze(1) & predicted_mask.unsqueeze(2)
+	stats = (truth.unsqueeze(1) == predicted.unsqueeze(2)) & combined_mask
+
+	# calculate true lengths of samples
+	lengths = predicted_mask.sum(-1).to(torch.float)
+	length_penalty = (lengths - truth_mask.sum(-1).to(torch.float)) / lengths
+	length_penalty = torch.exp(torch.min(length_penalty, torch.zeros_like(length_penalty)))
 
 	for weight in weights:
 		# calculate BLEU score for each sample in batch at once
-		scores += weight * stats.any(-1).sum(-1) / lengths
+		ngram_scores = stats.any(-1).sum(-1)
+		scores *= (ngram_scores.to(torch.float) / lengths) ** weight
 		stats = stats[:,:-1,:-1] & stats[:,1:,1:]
-		lengths -= 1
+		lengths = torch.max(lengths - 1, torch.ones_like(lengths))
 
-	return scores
+	return length_penalty * scores
 
 
 class EvaluateXNLI:
@@ -55,8 +61,11 @@ class EvaluateXNLI:
 
 			# calculate translations and BLEU scores for each language
 			ground_truth = batch[self.target_language]
+			truth_mask = ground_truth == self.vocab.pad_index
+			truth_bleu_mask = truth_mask | (ground_truth == self.vocab.sos_index) | (ground_truth == self.vocab.eos_index)
 			for language in self.languages:
-				token_ids, token_masks = batch[language], batch[language + "_mask"]
+				token_ids = batch[language]
+				token_masks = token_ids == self.vocab.pad_index
 
 				translations = torch.empty_like(ground_truth)
 				translations[:,0] = self.vocab.sos_index
@@ -75,7 +84,7 @@ class EvaluateXNLI:
 
 				# calculate BLEU scores
 				translation_mask[:,0] = 1
-				scores = batch_BLEU(translations, ground_truth, translation_mask, truth_mask)
+				scores = batch_BLEU(translations, ground_truth, translation_mask, truth_bleu_mask)
 
 				BLEU_scores[language] += scores.sum().item()
 				sample_counts[language] += scores.nelements()

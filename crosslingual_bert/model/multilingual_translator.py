@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 class LanguageTranslator(nn.Module):
 	def __init__(self, language_model, translator_model, target_language_model):
+		super().__init__()
 		self.language_model = language_model
 		self.translator_model = translator_model
 		self.target_language_model = target_language_model
@@ -13,10 +14,12 @@ class LanguageTranslator(nn.Module):
 		language_vectors, _ = self.language_model(input_ids, attention_mask=input_mask)
 		target_vectors, _ = self.target_language_model(target_ids, attention_mask=target_mask)
 		logits = self.translator_model(language_vectors[-1], target_vectors[-1], input_mask, target_mask)
+		return logits
 
 
 class MultilingualTranslator:
 	def __init__(self, multilingual_model, translator_model, target_language):
+		assert target_language in multilingual_model.ltoi
 		self.ltoi = multilingual_model.ltoi
 		self.models = multilingual_model.models.copy()
 		self.models['translator'] = translator_model
@@ -26,9 +29,9 @@ class MultilingualTranslator:
 
 	def __getitem__(self, index):
 		if type(index) is str:
-			return self.language_models[self.ltoi[index]]
+			return self.language_translators[self.ltoi[index]]
 		else:
-			return self.language_models[index]
+			return self.language_translators[index]
 	
 	def __len__(self):
 		return len(self.ltoi)

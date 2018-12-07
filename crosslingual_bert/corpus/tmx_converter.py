@@ -1,9 +1,16 @@
 import sys
+import argparse
 import xml.etree.cElementTree as ET
 
-
-xml_prefix = "http://www.w3.org/XML/1998/namespace"
+"http://www.w3.org/XML/1998/namespace"
 def tmx_to_pairs(tmx_file, output_file, pair):
+	"""Finds bilingual pairs of sentences in a Translation Memory eXchange (.tmx) file.
+	Writes language pairs found as a tsv file.
+
+	tmx_file -- (str|) name of .tmx file
+	output_file -- (str) name of desired output file
+	pair -- languages to write to file
+	"""
 	with open(output_file, 'w+') as f_out:
 		tmx_tree = iter(ET.iterparse(tmx_file, events=("start", "end")))
 		_, root = next(tmx_tree)
@@ -28,8 +35,28 @@ def tmx_to_pairs(tmx_file, output_file, pair):
 				elif elem.tag =='seg':
 					text = elem.text
 
-				root.clear()
+				elem.clear()
+
+			root.clear()
+
+		del tmx_tree
 
 
 if __name__ == '__main__':
-	tmx_to_pairs("../data/opensubtitles/en-vi.tmx", "en-vi-opensubtitles.txt", ('en', 'vi'))
+	"""parser = argparse.ArgumentParser(description="Find bilingual pairs in a .tmx file")
+	parser.add_argument('--tmx', '-t', type=str, required=True, help="tmx file")
+	parser.add_argument('--output', '-o', type=str, required=True, help="output file")
+	parser.add_argument('--languages' '-l', type=str, nargs='+', required=True, help="expected language pairs")
+	"""
+	print('el')
+	tmx_to_pairs("../data/opensubtitles/el-en.tmx", "../data/opensubtitles/en-el.tsv", ('en', 'el'))
+	print('es')
+	tmx_to_pairs("../data/opensubtitles/en-es.tmx", "../data/opensubtitles/en-es.tsv", ('en', 'es'))
+	print('fr')
+	tmx_to_pairs("../data/opensubtitles/en-fr.tmx", "../data/opensubtitles/en-fr.tsv", ('en', 'fr'))
+	print('hi')
+	tmx_to_pairs("../data/opensubtitles/en-hi.tmx", "../data/opensubtitles/en-hi.tsv", ('en', 'hi'))
+	print('ru')
+	tmx_to_pairs("../data/opensubtitles/en-ru.tmx", "../data/opensubtitles/en-ru.tsv", ('en', 'ru'))
+	print('sw')
+	tmx_to_pairs("../data/opensubtitles/en-sw.tmx", "../data/opensubtitles/en-sw.tsv", ('en', 'sw'))

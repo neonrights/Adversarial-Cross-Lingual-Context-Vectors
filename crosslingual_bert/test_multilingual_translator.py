@@ -3,6 +3,7 @@ import torch.nn as nn
 
 from model import MultilingualBert, MultilingualTranslator,\
 		BertConfig, BertModel, TranslatorModel
+import pdb
 
 print("Running unit tests for MultilingualModel...")
 
@@ -21,11 +22,12 @@ config.hidden_size *= 2
 config.intermediate_size *= 2
 translator = TranslatorModel(config)
 model = MultilingualTranslator(embedder, translator, 'en')
+components = model.get_components()
 
 assert len(model) == 5, "number of initialized objects is wrong"
 assert model.language_translators[0] is model['en']
 assert model['ch'] is model[3]
-assert model['en'].translator_model is model.models['translator']
+assert model['en'].translator_model is components['translator']
 print("passed all initialization tests")
 
 
@@ -38,3 +40,10 @@ assert en_output.size() == ch_output.size(), "got different sized output between
 assert en_output.size() == (batch_size, vocab_size), "expected output size (16, 64, 256), got {}".format(en_output.size())
 assert not (en_output == ch_output).all(), "got same values for different language models"
 print("passed all forward propagation tests")
+
+# test parameters
+for param in model.parameters():
+	assert isinstance(param, (torch.Tensor, nn.parameter.Parameter))
+
+print("passed parameter fetching tests")
+

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from itertools import chain
 
 
 class LanguageTranslator(nn.Module):
@@ -21,10 +22,11 @@ class MultilingualTranslator:
 	def __init__(self, multilingual_model, translator_model, target_language):
 		assert target_language in multilingual_model.ltoi
 		self.ltoi = multilingual_model.ltoi
-		self.models = multilingual_model.models.copy()
-		self.models['translator'] = translator_model
-		self.models['target_language'] = multilingual_model[target_language]
-		self.language_translators = [LanguageTranslator(model, translator_model, self.models['target_language'])
+		self.multilingual_model = multilingual_model
+		self.components = multilingual_model.components.copy()
+		self.components['translator'] = translator_model
+		self.components['target_language'] = multilingual_model[target_language]
+		self.language_translators = [LanguageTranslator(model, translator_model, self.components['target_language'])
 				for model in multilingual_model.language_models]
 
 	def __getitem__(self, index):
@@ -37,5 +39,9 @@ class MultilingualTranslator:
 		return len(self.ltoi)
 
 	def get_components(self):
-		return self.models
+		return self.components
+
+	def parameters(self):
+		return chain(self.components['translator'].parameters(),
+				self.multilingual_model.parameters())
 

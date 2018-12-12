@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from os import path
+from itertools import chain
 
 
 class PublicPrivateBert(nn.Module):
@@ -28,9 +29,9 @@ class MultilingualBert:
 	"""
 	def __init__(self, language_ids, arch, *arch_args, **arch_kwargs):
 		self.ltoi = language_ids # language to index/label id
-		self.models = {"public": arch(*arch_args, **arch_kwargs),
+		self.components = {"public": arch(*arch_args, **arch_kwargs),
 			"private": [arch(*arch_args, **arch_kwargs) for language in language_ids]}
-		self.language_models = [PublicPrivateBert(self.models['public'], model) for model in self.models['private']]
+		self.language_models = [PublicPrivateBert(self.components['public'], model) for model in self.components['private']]
 	
 	def __getitem__(self, index):
 		if type(index) is str:
@@ -42,4 +43,9 @@ class MultilingualBert:
 		return len(self.ltoi)
 
 	def get_components(self):
-		return self.models
+		return self.components
+
+	def parameters(self):
+		return chain(self.components["public"].parameters(),
+				*chain(model.parameters() for model in self.components['private']))
+

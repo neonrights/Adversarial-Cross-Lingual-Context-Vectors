@@ -47,5 +47,5 @@ class MultilingualBert:
 
 	def parameters(self):
 		return chain(self.components["public"].parameters(),
-				*chain(model.parameters() for model in self.components['private']))
+				*[model.parameters() for model in self.components['private']])
 

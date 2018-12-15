@@ -153,7 +153,7 @@ class TranslatorModel(nn.Module):
 			decoder_mask = torch.ones(decoder_vectors.shape[:-1], dtype=torch.uint8)
 		
 		# combine masks for each sequence into single attention mask matrix
-		attention_mask = torch.bmm(decoder_mask.unsqueeze(2), encoder_mask.unsqueeze(1))
+		attention_mask = decoder_mask.unsqueeze(1) & encoder_mask.unsqueeze(2)
 		attention_mask = attention_mask.unsqueeze(1).to(dtype=next(self.parameters()).dtype)
 		attention_mask = (1.0 - attention_mask) * -10000.0
 

@@ -1,11 +1,13 @@
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from itertools import chain
 
-from optimization import BERTAdam
-from utils import *
+from .optimization import BERTAdam
+from .utils import *
 
 import tqdm
+import pdb
 
 
 class TranslatorTrainer:
@@ -19,7 +21,7 @@ class TranslatorTrainer:
 
     """
 
-    def __init__(self, translator_model, languages, train_data, test_data, with_cuda=True):
+    def __init__(self, translator_model, languages, target_language, train_data, test_data, with_cuda=True, lr=1e-4, log_freq=10):
         """
         :param bert: BERT model which you want to train
         :param vocab_size: total word vocab size
@@ -37,23 +39,25 @@ class TranslatorTrainer:
         self.device = torch.device("cuda:0" if cuda_condition else "cpu")
 
         # This BERT model will be saved every epoch
-        self.model = model
+        self.model = translator_model
         self.languages = languages
+        self.target_language = target_language
 
+        for translator in self.model.language_translators:
+            translator.to(self.device)
         # Distributed GPU training if CUDA can detect more than 1 GPU
-        if with_cuda and torch.cuda.device_count() > 1:
-            print("Using %d GPUS for BERT" % torch.cuda.device_count())
-            self.model = nn.DataParallel(self.model, device_ids=cuda_devices)
+        """if with_cuda and torch.cuda.device_count() > 1:
+                print("Using %d GPUS for BERT" % torch.cuda.device_count())
+                self.model = nn.DataParallel(self.model, device_ids=cuda_devices)"""
 
         # Setting the train and test data loader
         self.train_data = train_data
         self.test_data = test_data
 
         # Setting the Adam optimizer with hyper-param
-        self.optim = BERTAdam(self.model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
-        self.optim_schedule = ScheduledOptim(self.optim, self.bert.hidden, n_warmup_steps=warmup_steps)
+        self.optim = BERTAdam(self.model.parameters(), lr=lr)
 
-        # Using Negative Log Likelihood Loss function for predicting the masked_token
+        # Using Negative Log Likelihood Loss function
         self.criterion = nn.NLLLoss()
 
         self.log_freq = log_freq
@@ -70,7 +74,7 @@ class TranslatorTrainer:
         """
         loop over the data_loader for training or testing
         if on train status, backward operation is activated
-        and also auto save the model every peoch
+        and also auto save the model every epoch
 
         :param epoch: current epoch index
         :param data_loader: torch.utils.data.DataLoader for iteration
@@ -81,8 +85,8 @@ class TranslatorTrainer:
 
         # Setting the tqdm progress bar
         data_iter = tqdm.tqdm(enumerate(iter_dict(data)),
-                              desc="EP_%s:%d:%s" % (str_code, epoch),
-                              total=len(min(data.values, key=len)))
+                              desc="EP_%s:%d" % (str_code, epoch),
+                              total=min(len(v) for v in data.values()))
 
         avg_loss = 0.
         total_correct = 0
@@ -93,7 +97,7 @@ class TranslatorTrainer:
                 batch = batches[language]
 
                 # send data to cpu or gpu depending on settings
-                batch = {key: value.to(self.device) for key, value in data.items()}
+                batch = {key: value.to(self.device) for key, value in batch.items()}
 
                 # calculate loss for specific language
                 predictions = translator(batch['input_ids'], batch['target_ids'], batch['input_mask'], batch['target_mask'])
@@ -101,15 +105,15 @@ class TranslatorTrainer:
 
                 # 3. backward and optimization only in train
                 if train:
-                    self.optim_schedule.zero_grad()
+                    self.optim.zero_grad()
                     loss.backward()
-                    self.optim_schedule.step_and_update_lr()
+                    self.optim.step()
 
                 # next sentence prediction accuracy
-                correct = predictions.argmax(dim=-1).eq(data["labels"]).sum().item()
+                correct = predictions.argmax(dim=-1).eq(batch["labels"]).sum().item()
                 avg_loss += loss.item()
                 total_correct += correct
-                total_element += data["labels"].nelement()
+                total_element += batch["labels"].nelement()
 
             post_fix = {
                 "epoch": epoch,

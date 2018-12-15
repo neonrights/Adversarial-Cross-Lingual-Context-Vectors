@@ -1,5 +1,6 @@
 import os
 import json
+from itertools import chain
 
 import torch
 import torch.nn as nn
@@ -7,28 +8,80 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 
 from .optimization import BERTAdam
-from .adversarial_wrapper import AdversarialBERTWrapper
+from .utils import *
+from .language_model import NextSentencePrediction, MaskedLanguageModel
+
 
 import tqdm
 
 
-def freeze(models):
-    try:
-        for model in models:
-            for weight in model.parameters():
-                weight.requires_grad = False
-    except TypeError:
-        for weight in models.parameters():
-            weight.requires_grad = False
 
-def thaw(models):
-    try:
-        for model in models:
-            for weight in model.parameters():
-                weight.requires_grad = True
-    except TypeError:
-        for weight in models.parameters():
-            weight.requires_grad = True
+class SingleBERTWrapper(nn.Module):
+    """
+    wrapper that adds pretraining prediction for a single language model
+    """
+    def __init__(self, language_model, adversary_model, mask_model, next_model, hidden):
+        super().__init__()
+        self.language_model = language_model
+        self.adversary_model = adversary_model
+        self.mask_model = mask_model
+        self.next_model = next_model
+        self.hidden = hidden
+    
+    def forward(self, *args, **kwargs):
+        hidden_vectors, pooled_vectors = self.language_model(*args, **kwargs)
+        
+        # logits for prediction tasks
+        token_logits = self.mask_model(hidden_vectors[-1])
+        next_logits = self.next_model(pooled_vectors)
+
+        # public-private vector similarity loss
+        public_vectors, private_vectors = torch.split(hidden_vectors[-1], self.hidden // 2, -1)
+        diff = torch.bmm(private_vectors, torch.transpose(public_vectors, 1, 2))
+        diff_loss = torch.sum(diff ** 2)
+        diff_loss /= pooled_vectors.size(0)
+
+        # adversarial prediction
+        public_pooled, _ = torch.split(pooled_vectors, self.hidden // 2, -1)
+        language_logits = self.adversary_model(public_pooled)
+
+        return token_logits, next_logits, language_logits, diff_loss
+
+
+class AdversarialBERTWrapper:
+    """
+    adds pretraining tasks to entire multilingual model
+    """
+    def __init__(self, multilingual_model, adversary_model, hidden, vocab_size):
+        self.multilingual_model = multilingual_model
+        self.components = multilingual_model.components.copy()
+        self.components['adversary'] = adversary_model
+        self.components['mask'] = MaskedLanguageModel(hidden, vocab_size)
+        self.components['next'] = NextSentencePrediction(hidden)
+        # add necessary prediction task
+        self.pretraining_models = [SingleBERTWrapper(self.multilingual_model[language],
+                self.components['adversary'], self.components['mask'], self.components['next'],
+                hidden) for language in self.multilingual_model.ltoi]
+
+    def __getitem__(self, index):
+        if type(index) is str:
+            return self.pretraining_models[self.multilingual_model.ltoi[index]]
+        else:
+            return self.pretraining_models[index]
+    
+    def __len__(self):
+        return len(self.pretraining_models)
+
+    def adversary_forward(self, *args, **kwargs):
+        _, pooled_vectors = self.multilingual_model.components['public'](*args, **kwargs)
+        return self.components['adversary'](pooled_vectors)
+
+    def get_components(self):
+        return self.components
+
+    def parameters(self):
+        return chain(self.multilingual_model.parameters(), self.components['adversary'].parameters(),
+                self.components['mask'].parameters(), self.components['next'].parameters())
 
 
 class AdversarialPretrainer:
@@ -43,7 +96,7 @@ class AdversarialPretrainer:
     """
 
     def __init__(self, multilingual_model, adversary_model, vocab_size: int, hidden_size, languages,
-                 train_data, test_data, adv_repeat=5, beta=1e-2, gamma=1e-4,
+                 train_data, test_data, adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4,
                  with_cuda=True, log_freq=10):
         """
         :param bert: BERT model which you want to train
@@ -65,9 +118,9 @@ class AdversarialPretrainer:
         self.ltoi = languages
         self.model = AdversarialBERTWrapper(multilingual_model, adversary_model, hidden_size, vocab_size)
 
-        freeze(self.model.pretraining_models + [self.model.adversary_model])
+        freeze(self.model.pretraining_models + [self.model.components['adversary']])
 
-        self.model.adversary_model.to(self.device)
+        self.model.components['adversary'].to(self.device)
         for model in self.model.pretraining_models:
             model.to(self.device)
 
@@ -79,8 +132,8 @@ class AdversarialPretrainer:
         self.D_repeat = adv_repeat
         self.criterion = nn.NLLLoss()   
         self.mask_criterion = nn.NLLLoss(ignore_index=0)     
-        self.D_optim = Adam(adversary_model.parameters())
-        self.lm_optim = BERTAdam([param for model in self.model.get_components().values() for param in model.parameters()], 1e-4)
+        self.D_optim = Adam(adversary_model.parameters(), lr)
+        self.lm_optim = BERTAdam(self.model.parameters(), lr)
 
         # loss function hyperparameters
         self.beta = beta
@@ -108,7 +161,7 @@ class AdversarialPretrainer:
         str_code = "train" if train else "test"
 
         if train:
-            thaw(self.model.adversary_model)
+            thaw(self.model.components['adversary'])
 
         for repeat in range(self.D_repeat):
             # for batch in batches
@@ -137,8 +190,8 @@ class AdversarialPretrainer:
                     epoch+1, repeat+1, total_loss / len(D_iter), total_correct / total_elements))
 
         if train:
-            freeze(self.model.adversary_model)
-            thaw(self.model.multilingual_model.public_model)
+            freeze(self.model.components['adversary'])
+            thaw(self.model.multilingual_model.components['public'])
 
         micro_loss = 0
         for language, language_label in self.ltoi.items():
@@ -225,7 +278,7 @@ class AdversarialPretrainer:
                 freeze(language_model.language_model.private)
 
         if train:
-            freeze(self.model.multilingual_model.public_model)
+            freeze(self.model.multilingual_model.components['public'])
 
         return micro_loss / (len(data) - 1)
 

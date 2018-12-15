@@ -8,7 +8,7 @@ import pdb
 print("Running unit tests for MultilingualModel...")
 
 language_ids = {'en': 0, 'cz': 1, 'fr': 2, 'ch': 3, 'jp': 4}
-vocab_size = 1000
+vocab_size = 100000
 batch_size = 16
 seq_len = 64
 

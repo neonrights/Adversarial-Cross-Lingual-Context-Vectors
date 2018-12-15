@@ -27,7 +27,7 @@ class ParallelDataset(Dataset):
 
 
 class ParallelTrainDataset(ParallelDataset):
-	def __init__(self, parallel_tsv, tokenizer, input_language, target_language, seq_len):
+	def __init__(self, parallel_tsv, tokenizer, seq_len, input_language, target_language):
 		super().__init__(parallel_tsv, tokenizer, seq_len, languages=(input_language, target_language))
 		self.input_language = input_language
 		self.target_language = target_language

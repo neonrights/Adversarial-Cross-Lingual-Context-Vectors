@@ -2,7 +2,7 @@ from torch.utils.data import Dataset
 import tqdm
 import torch
 import random
-import pickle
+import json
 
 
 class DiscriminatorDataset(Dataset):
@@ -27,7 +27,7 @@ class DiscriminatorDataset(Dataset):
                     self.corpus_lines += 1
 
             if on_memory:
-                self.lines = [pickle.loads(line)
+                self.lines = [json.loads(line)
                               for line in tqdm.tqdm(f, desc="Loading Dataset", total=corpus_lines)]
                 self.corpus_lines = len(self.lines)
 
@@ -68,5 +68,5 @@ class DiscriminatorDataset(Dataset):
                 self.file = open(self.corpus_path, "r", encoding=self.encoding)
                 line = self.file.__next__()
 
-            return pickle.loads(line)
+            return json.loads(line)
 

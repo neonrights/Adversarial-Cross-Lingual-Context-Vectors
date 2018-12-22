@@ -1,8 +1,7 @@
+import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from os import path
-from itertools import chain
 
 from .bert_official import BertConfig, BertModel
 from .translator import TranslatorModel
@@ -12,14 +11,15 @@ class MultilingualBert(nn.Module):
 	"""Cross-lingual context vector model using transformer architecture
 	"""
 	def __init__(self, languages, config: BertConfig):
+		super().__init__()
 		self.shared = BertModel(config)
 		self.private = {language: BertModel(config) for language in languages}
 	
 	def forward(self, language, input_ids, token_type_ids=None, attention_mask=None):
 		shared_vectors, shared_pooled = self.shared(input_ids, token_type_ids, attention_mask)
 		private_vectors, private_pooled = self.private[language](input_ids, token_type_ids, attention_mask)
-		hidden_vectors = [torch.cat(sv, pv, -1) for sv, pv in zip(shared_vectors, private_vectors)]
-		pooled_output = torch.cat(shared_pooled, private_pooled, -1)
+		hidden_vectors = [torch.cat((sv, pv), -1) for sv, pv in zip(shared_vectors, private_vectors)]
+		pooled_output = torch.cat((shared_pooled, private_pooled), -1)
 		return hidden_vectors, pooled_output
 
 	def freeze_all_except(self, excepted_language=None):
@@ -47,16 +47,17 @@ class MultilingualBert(nn.Module):
 class MultilingualTranslator(nn.Module):
 	"""Universal to target language translation model using transformer architecture
 	"""
-	def __init__(self, model: MultilingualBert, config: BertConfig, target_language):
-		assert target_language in multilingual_model.private
+	def __init__(self, model: MultilingualBert, target_language: str, config: BertConfig):
+		assert target_language in model.private
+		super().__init__()
 		self.multilingual_model = model
 		
 		# double intermediate and hidden size to account for shared-private model
-		config = config.copy()
+		config = copy.copy(config)
 		config.intermediate_size *= 2
 		config.hidden_size *= 2
 
-		self.translator = TranslatorModel(config)
+		self.translator_model = TranslatorModel(config)
 		self.target_language = target_language
 
 	def forward(self, language, input_ids, target_ids, input_mask=None, target_mask=None):

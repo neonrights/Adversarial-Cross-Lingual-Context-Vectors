@@ -35,9 +35,12 @@ assert en_hidden[-1].size() == (batch_size, seq_len, 2*config.hidden_size), \
 assert not (en_pooled == zh_pooled).all(), "got same values for different language models"
 print("passed all forward propagation tests")
 
-for param in model.parameters():
+for param in model.language_parameters('en'):
 	assert isinstance(param, (torch.Tensor, nn.parameter.Parameter))
 
-print("passed parameter fetching method test")
+for param in model.language_parameters('zh'):
+	assert isinstance(param, (torch.Tensor, nn.parameter.Parameter))
+
+print("passed language specific parameter fetching method test")
 
 # TODO test freeze methods

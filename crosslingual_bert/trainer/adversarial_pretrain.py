@@ -11,77 +11,49 @@ from .optimization import BERTAdam
 from .utils import *
 from .language_model import NextSentencePrediction, MaskedLanguageModel
 
-
 import tqdm
 
 
-
-class SingleBERTWrapper(nn.Module):
-    """
-    wrapper that adds pretraining prediction for a single language model
-    """
-    def __init__(self, language_model, adversary_model, mask_model, next_model, hidden):
-        super().__init__()
-        self.language_model = language_model
-        self.adversary_model = adversary_model
-        self.mask_model = mask_model
-        self.next_model = next_model
-        self.hidden = hidden
-    
-    def forward(self, *args, **kwargs):
-        hidden_vectors, pooled_vectors = self.language_model(*args, **kwargs)
-        
-        # logits for prediction tasks
-        token_logits = self.mask_model(hidden_vectors[-1])
-        next_logits = self.next_model(pooled_vectors)
-
-        # public-private vector similarity loss
-        public_vectors, private_vectors = torch.split(hidden_vectors[-1], self.hidden // 2, -1)
-        diff = torch.bmm(private_vectors, torch.transpose(public_vectors, 1, 2))
-        diff_loss = torch.sum(diff ** 2)
-        diff_loss /= pooled_vectors.size(0)
-
-        # adversarial prediction
-        public_pooled, _ = torch.split(pooled_vectors, self.hidden // 2, -1)
-        language_logits = self.adversary_model(public_pooled)
-
-        return token_logits, next_logits, language_logits, diff_loss
-
-
-class AdversarialBERTWrapper:
+class AdversarialBertWrapper(nn.Module):
     """
     adds pretraining tasks to entire multilingual model
     """
     def __init__(self, multilingual_model, adversary_model, hidden, vocab_size):
         self.multilingual_model = multilingual_model
-        self.components = multilingual_model.components.copy()
-        self.components['adversary'] = adversary_model
-        self.components['mask'] = MaskedLanguageModel(hidden, vocab_size)
-        self.components['next'] = NextSentencePrediction(hidden)
-        # add necessary prediction task
-        self.pretraining_models = [SingleBERTWrapper(self.multilingual_model[language],
-                self.components['adversary'], self.components['mask'], self.components['next'],
-                hidden) for language in self.multilingual_model.ltoi]
+        self.adversary_model = adversary_model
+        self.mask_model = MaskedLanguageModel(hidden, vocab_size)
+        self.next_model = NextSentencePrediction(hidden)
 
-    def __getitem__(self, index):
-        if type(index) is str:
-            return self.pretraining_models[self.multilingual_model.ltoi[index]]
+    def forward(self, component, input_ids, token_type_ids=None, attention_mask=None):
+        if component == 'adversary':
+            # return logits for adversarial language prediction
+            _, pooled_vectors = self.multilingual_model.shared(input_ids, token_type_ids, attention_mask)
+            return self.adversary_model(pooled_vectors)
         else:
-            return self.pretraining_models[index]
-    
-    def __len__(self):
-        return len(self.pretraining_models)
+            hidden_vectors, pooled_vectors = self.language_model(component, input_ids, token_type_ids, attention_mask)
+        
+            # logits for prediction tasks
+            token_logits = self.mask_model(hidden_vectors[-1])
+            next_logits = self.next_model(pooled_vectors)
 
-    def adversary_forward(self, *args, **kwargs):
-        _, pooled_vectors = self.multilingual_model.components['public'](*args, **kwargs)
-        return self.components['adversary'](pooled_vectors)
+            # public-private vector similarity loss
+            hidden_dim = hidden_vectors[-1].size(-1)
+            public_vectors, private_vectors = torch.split(hidden_vectors[-1], hidden_dim // 2, -1)
+            diff = torch.bmm(private_vectors, torch.transpose(public_vectors, 1, 2))
+            diff_loss = torch.sum(diff ** 2)
+            diff_loss /= pooled_vectors.size(0)
 
-    def get_components(self):
-        return self.components
+            # adversarial prediction
+            public_pooled, _ = torch.split(pooled_vectors, self.hidden // 2, -1)
+            language_logits = self.adversary_model(public_pooled)
 
-    def parameters(self):
-        return chain(self.multilingual_model.parameters(), self.components['adversary'].parameters(),
-                self.components['mask'].parameters(), self.components['next'].parameters())
+            return token_logits, next_logits, language_logits, diff_loss
+
+    def component_parameters(self, component):
+        if component == 'adversary':
+            return self.adversary_model.parameters()
+        else:
+            return chain(self.multilingual_model.language_parameters(component), self.mask_model.parameters(), self.next_model.parameters())
 
 
 class AdversarialPretrainer:
@@ -117,12 +89,7 @@ class AdversarialPretrainer:
         # initialize public, private, and adversarial discriminator
         self.ltoi = languages
         self.model = AdversarialBERTWrapper(multilingual_model, adversary_model, hidden_size, vocab_size)
-
-        freeze(self.model.pretraining_models + [self.model.components['adversary']])
-
-        self.model.components['adversary'].to(self.device)
-        for model in self.model.pretraining_models:
-            model.to(self.device)
+        self.model.to(self.device)
 
         # get data
         self.train_data = train_data
@@ -132,8 +99,8 @@ class AdversarialPretrainer:
         self.D_repeat = adv_repeat
         self.criterion = nn.NLLLoss()   
         self.mask_criterion = nn.NLLLoss(ignore_index=0)     
-        self.D_optim = Adam(adversary_model.parameters(), lr)
-        self.lm_optim = BERTAdam(self.model.parameters(), lr)
+        self.D_optim = Adam(self.model.component_parameters("adversary"), lr)
+        self.lm_optims = {language: BERTAdam(self.model.component_parameters(language), lr) for language in languages}
 
         # loss function hyperparameters
         self.beta = beta
@@ -160,9 +127,6 @@ class AdversarialPretrainer:
         """
         str_code = "train" if train else "test"
 
-        if train:
-            thaw(self.model.components['adversary'])
-
         for repeat in range(self.D_repeat):
             # for batch in batches
             D_iter = tqdm.tqdm(enumerate(data["adversary"]),
@@ -174,7 +138,7 @@ class AdversarialPretrainer:
             total_elements = 0
             for i, batch in D_iter:
                 batch = {key: value.to(self.device) for key, value in batch.items()}
-                logits = self.model.adversary_forward(batch["input_ids"], attention_mask=batch['mask'])
+                logits = self.model.forward("adversary", batch["input_ids"], attention_mask=batch['mask'])
                 loss = self.criterion(logits, batch['language_label'])
                 
                 total_loss += loss.item()
@@ -189,22 +153,11 @@ class AdversarialPretrainer:
             print("EP{0}_D_{1}: loss={2:.6f} acc={3:.6f}".format(
                     epoch+1, repeat+1, total_loss / len(D_iter), total_correct / total_elements))
 
-        if train:
-            freeze(self.model.components['adversary'])
-            thaw(self.model.multilingual_model.components['public'])
-
         micro_loss = 0
         for language, language_label in self.ltoi.items():
-            if language == "adversary":
-                continue
-
             language_iter = tqdm.tqdm(enumerate(data[language]),
                     desc="{}_{}:{}".format(language, str_code, epoch+1,
                     total=len(data[language])))
-
-            language_model = self.model[language]
-            if train:
-                thaw(language_model.language_model.private)
 
             total_mask_loss = 0
             total_next_loss = 0
@@ -216,7 +169,7 @@ class AdversarialPretrainer:
             total_next_elements = 0
             for i, batch in language_iter:
                 batch = {key: value.to(self.device) for key, value in batch.items()}
-                mask_logits, next_logits, language_logits, diff_loss = language_model(batch['input_ids'], batch['segment_label'], batch['mask'])
+                mask_logits, next_logits, language_logits, diff_loss = self.model(language, batch['input_ids'], batch['segment_label'], batch['mask'])
 
                 mask_loss = self.mask_criterion(mask_logits.transpose(1,2), batch['token_labels'])
                 next_loss = self.criterion(next_logits, batch['is_next'])
@@ -225,9 +178,9 @@ class AdversarialPretrainer:
 
                 train_loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss
                 if train:
-                    self.lm_optim.zero_grad()
+                    self.lm_optims[language].zero_grad()
                     train_loss.backward()
-                    self.lm_optim.step()
+                    self.lm_optim[language].step()
 
                 micro_loss += train_loss.item()
                 total_mask_loss += mask_loss.item()
@@ -274,12 +227,6 @@ class AdversarialPretrainer:
                     next_acc={8:0.4f}".format(
                 epoch+1, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_mask_acc, avg_next_acc))
 
-            if train:
-                freeze(language_model.language_model.private)
-
-        if train:
-            freeze(self.model.multilingual_model.components['public'])
-
         return micro_loss / (len(data) - 1)
 
 
@@ -294,13 +241,7 @@ class AdversarialPretrainer:
         if not os.path.isdir(directory_path):
             os.mkdir(directory_path)
 
-        directory_path = os.path.join(directory_path, str(epoch+1))
-        if not os.path.isdir(directory_path):
-            os.mkdir(directory_path)
-
-        for save_name, save_model in self.model.get_components().items():
-            torch.save(save_model.cpu(), os.path.join(directory_path, "{}.model".format(save_name)))
-            save_model.to(self.device)
+        torch.save(self.model.cpu(), os.path.join(directory_path, "epoch%d.model" % epoch))
 
         print("EP:%d Model Saved in:" % epoch, directory_path)
         return directory_path

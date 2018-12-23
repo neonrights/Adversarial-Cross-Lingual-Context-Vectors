@@ -1,4 +1,5 @@
 import copy
+from itertools import chain
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,32 +17,16 @@ class MultilingualBert(nn.Module):
 		self.private = {language: BertModel(config) for language in languages}
 	
 	def forward(self, language, input_ids, token_type_ids=None, attention_mask=None):
+		assert language in self.private
 		shared_vectors, shared_pooled = self.shared(input_ids, token_type_ids, attention_mask)
 		private_vectors, private_pooled = self.private[language](input_ids, token_type_ids, attention_mask)
 		hidden_vectors = [torch.cat((sv, pv), -1) for sv, pv in zip(shared_vectors, private_vectors)]
 		pooled_output = torch.cat((shared_pooled, private_pooled), -1)
 		return hidden_vectors, pooled_output
 
-	def freeze_all_except(self, excepted_language=None):
-		"""Freeze all components except shared and private components for language.
-		If None, freeze all components.
-		"""
-		for parameter in self.shared.parameters():
-			parameter.requires_grad = excepted_language is None
-
-		for language, model in self.private.items():
-			for parameter in model.parameters():
-				parameter.requires_grad = language == excepted_language
-
-	def thaw_all(self):
-		"""Thaw/unfreeze all components
-		"""
-		for parameter in self.shared.parameters():
-			parameter.requires_grad = True
-
-		for language, model in self.private.items():
-			for parameter in model.parameters():
-				parameter.requires_grad = True
+	def language_parameters(self, language):
+		assert language in self.private
+		return chain(self.shared.parameters(), self.private[language].parameters())
 
 
 class MultilingualTranslator(nn.Module):

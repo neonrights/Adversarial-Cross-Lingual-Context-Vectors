@@ -1,6 +1,6 @@
 from torch.utils.data import DataLoader
 
-from model import BertConfig, BertModel, MultilingualBERT, SimpleAdversary
+from model import BertConfig, MultilingualBert
 from dataset import DiscriminatorDataset, LanguageDataset, JSONVocab
 from trainer import AdversarialPretrainer
 
@@ -16,7 +16,7 @@ en_dataset = DataLoader(en_dataset, batch_size=32, shuffle=True)
 cz_dataset = DataLoader(cz_dataset, batch_size=32, shuffle=True)
 D_dataset = DataLoader(D_dataset, batch_size=32, shuffle=True)
 
-train_data = {'en': en_dataset, 'cz': cz_dataset}
+train_data = {'en': en_dataset, 'cz': cz_dataset, 'adversary': D_dataset}
 
 # initialize models
 hidden = 256
@@ -27,12 +27,14 @@ config = BertConfig(vocab_size=len(vocab),
 		intermediate_size=hidden,
 		max_position_embeddings=256)
 
-model = MultilingualBERT(language_ids, BertModel, config)
-adversary = SimpleAdversary(hidden//2, len(language_ids))
-trainer = AdversarialPretrainer(model, adversary, len(vocab), hidden, language_ids, train_data, D_dataset, train_data, 5, beta=0.1, gamma=1e-9)
+model = MultilingualBert(language_ids, config)
+trainer = AdversarialPretrainer(model,
+		config,
+		language_ids,
+		train_data,
+		train_data,
+		2, beta=0.1, gamma=1e-4)
 
-for epoch in range(1000):
+for epoch in range(5):
 	trainer.train(epoch)
-
-	if (epoch+1) % 10 == 0:
-		trainer.save(epoch)
+	trainer.save(epoch)

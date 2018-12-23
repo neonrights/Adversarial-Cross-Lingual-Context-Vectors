@@ -8,21 +8,66 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 
 from .optimization import BERTAdam
-from .utils import *
-from .language_model import NextSentencePrediction, MaskedLanguageModel
 
 import tqdm
+
+
+class NextSentencePrediction(nn.Module):
+    """2-class classification model : is_next, is_not_next
+    """
+
+    def __init__(self, hidden):
+        """
+        :param hidden: BERT model output size
+        """
+        super().__init__()
+        self.linear = nn.Linear(hidden, 2)
+        self.softmax = nn.LogSoftmax(dim=-1)
+
+    def forward(self, x):
+        return self.softmax(self.linear(x))
+
+
+class MaskedLanguageModel(nn.Module):
+    """predicting origin token from masked input sequence
+    n-class classification problem, n-class = vocab_size
+    """
+
+    def __init__(self, hidden, vocab_size):
+        """
+        :param hidden: output size of BERT model
+        :param vocab_size: total vocab size
+        """
+        super().__init__()
+        self.linear = nn.Linear(hidden, vocab_size)
+        self.softmax = nn.LogSoftmax(dim=-1)
+
+    def forward(self, x):
+        return self.softmax(self.linear(x))
+
+
+class SimpleAdversary(nn.Module):
+    """simpled adversarial language predictor
+    """
+    def __init__(self, hidden_size, language_size):
+        super().__init__()
+        self.linear = nn.Linear(hidden_size, language_size)
+        self.softmax = nn.LogSoftmax(dim=-1)
+
+    def forward(self, inputs):
+        return self.softmax(self.linear(inputs))
 
 
 class AdversarialBertWrapper(nn.Module):
     """
     adds pretraining tasks to entire multilingual model
     """
-    def __init__(self, multilingual_model, adversary_model, hidden, vocab_size):
+    def __init__(self, multilingual_model, language_size, config):
+        super().__init__()
         self.multilingual_model = multilingual_model
-        self.adversary_model = adversary_model
-        self.mask_model = MaskedLanguageModel(hidden, vocab_size)
-        self.next_model = NextSentencePrediction(hidden)
+        self.adversary_model = SimpleAdversary(config.hidden_size, language_size)
+        self.mask_model = MaskedLanguageModel(config.hidden_size*2, config.vocab_size)
+        self.next_model = NextSentencePrediction(config.hidden_size*2)
 
     def forward(self, component, input_ids, token_type_ids=None, attention_mask=None):
         if component == 'adversary':
@@ -30,7 +75,7 @@ class AdversarialBertWrapper(nn.Module):
             _, pooled_vectors = self.multilingual_model.shared(input_ids, token_type_ids, attention_mask)
             return self.adversary_model(pooled_vectors)
         else:
-            hidden_vectors, pooled_vectors = self.language_model(component, input_ids, token_type_ids, attention_mask)
+            hidden_vectors, pooled_vectors = self.multilingual_model(component, input_ids, token_type_ids, attention_mask)
         
             # logits for prediction tasks
             token_logits = self.mask_model(hidden_vectors[-1])
@@ -44,7 +89,7 @@ class AdversarialBertWrapper(nn.Module):
             diff_loss /= pooled_vectors.size(0)
 
             # adversarial prediction
-            public_pooled, _ = torch.split(pooled_vectors, self.hidden // 2, -1)
+            public_pooled, _ = torch.split(pooled_vectors, hidden_dim // 2, -1)
             language_logits = self.adversary_model(public_pooled)
 
             return token_logits, next_logits, language_logits, diff_loss
@@ -67,9 +112,8 @@ class AdversarialPretrainer:
 
     """
 
-    def __init__(self, multilingual_model, adversary_model, vocab_size: int, hidden_size, languages,
-                 train_data, test_data, adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4,
-                 with_cuda=True, log_freq=10):
+    def __init__(self, multilingual_model, config, languages, train_data, test_data,
+                adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4, with_cuda=True, log_freq=10):
         """
         :param bert: BERT model which you want to train
         :param vocab_size: total word vocab size
@@ -88,7 +132,7 @@ class AdversarialPretrainer:
 
         # initialize public, private, and adversarial discriminator
         self.ltoi = languages
-        self.model = AdversarialBERTWrapper(multilingual_model, adversary_model, hidden_size, vocab_size)
+        self.model = AdversarialBertWrapper(multilingual_model, len(languages), config)
         self.model.to(self.device)
 
         # get data
@@ -180,7 +224,7 @@ class AdversarialPretrainer:
                 if train:
                     self.lm_optims[language].zero_grad()
                     train_loss.backward()
-                    self.lm_optim[language].step()
+                    self.lm_optims[language].step()
 
                 micro_loss += train_loss.item()
                 total_mask_loss += mask_loss.item()

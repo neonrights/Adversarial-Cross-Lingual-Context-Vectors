@@ -1,7 +1,7 @@
 from corpus import EnCzWordReader
 
 print("Running smoke tests")
-cwr = EnCzWordReader("./archives/CzEnAli_1.0.tar.gz")
+cwr = EnCzWordReader("./data/CzEnAli_1.0.tar.gz")
 foo = cwr[0]
 assert type(foo) is dict
 assert type(foo["sentences"]) is list

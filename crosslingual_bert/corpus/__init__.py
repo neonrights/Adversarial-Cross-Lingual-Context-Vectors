@@ -1,4 +1,3 @@
-from .corpusreader import BadCorpusError
-from .czechword import EnCzWordReader
+from .readers import BadCorpusError, EnCzWordReader, OpenSubtitlesReader
 from .discriminator_generator import DiscriminatorSequenceGenerator
 from .language_generator import LanguageSequenceGenerator

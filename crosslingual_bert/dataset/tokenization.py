@@ -92,6 +92,13 @@ class BertTokenizer(object):
         for token in tokens:
             ids.append(self.vocab[token])
         return ids
+        
+    def tokenize_and_convert_to_ids(self, text):
+        ids = []
+        for token in self.basic_tokenizer.tokenize(text):
+            for sub_token in self.wordpiece_tokenizer.tokenize(token):
+                ids.append(self.vocab[sub_token])
+        return ids
 
     def convert_ids_to_tokens(self, ids):
         """Converts a sequence of ids in wordpiece tokens using the vocab."""

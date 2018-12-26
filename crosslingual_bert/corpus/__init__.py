@@ -1,3 +1,4 @@
 from .readers import BadCorpusError, EnCzWordReader, OpenSubtitlesReader
 from .discriminator_generator import DiscriminatorSequenceGenerator
 from .language_generator import LanguageSequenceGenerator
+from .sequence_generator import SequenceGenerator

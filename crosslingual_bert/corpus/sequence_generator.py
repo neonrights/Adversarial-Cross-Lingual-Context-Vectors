@@ -1,29 +1,27 @@
-
+import random
+import tqdm
+from .debugger import exception_debugger
 
 class SequenceGenerator:
 	"""Generates tokenized sequences of sentences from a specific corpus given
 	a corpus reader which returns a list of sentence strings and a tokenizer.
-	Creates samples of contiguous sentences up to a set max number of tokens,
+	Creates samples of contiguous sentences up to a set max number of characters,
 	then writes the samples to a file.  Each sentence is written on a line, with
 	each sample separated by an empty line.
 	"""
-	def __init__(self, corpus_reader, tokenizer, max_seq_len=512):
+	def __init__(self, corpus_reader, max_seq_len=4096):
 		self.corpus = corpus_reader
-		self.tokenizer = tokenizer
 		self.max_seq_len = max_seq_len
 
 	def random_samples(self, n_samples, out_path):
 		"""generate a sample from n randomly chosen documents in the corpus
 		"""
 		with open(out_path, 'w+') as f_out:
-			for i in range(n_samples):
-				for i in range(n_samples):
-				document = random.choice(self.corpus)
-				sample = self.sample_sentences(document)
-
-				if sample is None:
-					print("Failed to write {} samples, got to {}".format(n_samples, i+1))
-					break
+			for i in tqdm.tqdm(range(n_samples), desc="writing samples"):
+				sample = None
+				while not sample:
+					document = random.choice(self.corpus)
+					sample = self.sample_sentence(document)
 
 				f_out.write('\t'.join(sample) + '\n')
 
@@ -31,23 +29,22 @@ class SequenceGenerator:
 		"""generate a sample once from all documents in the corpus
 		"""
 		with open(out_path, 'w+') as f_out:
-			for document in self.corpus:
+			for document in tqdm.tqdm(self.corpus, desc="writing samples"):
 				sample = self.sample_sentence(document)
 
-				if sample is None:
-					print("Failed to write samples")
-					break
-
-				f_out.write('\t'.join(sample) + '\n')
-
+				if sample:
+					f_out.write('\t'.join(sample) + '\n')
 
 	def sample_sentence(self, document):
-		start = random.randint(0, len(document) - 5)
+		if not document or len(document) <= 1:
+			return []
+
+		start = random.randrange(len(document)-1)
 		end = start + 1
 
-		sample = self.tokenizer.tokenize(document[start])
-		while end < len(document) and len(samples) < self.max_seq_len:
-			sample += self.tokenizer.tokenize(document[end])
+		char_count = len(document[start])
+		while end < len(document) and char_count < self.max_seq_len:
+			char_count += len(document[end])
 			end += 1
 
-		return sample
+		return document[start:end]

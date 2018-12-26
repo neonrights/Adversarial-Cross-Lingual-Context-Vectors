@@ -1,9 +1,7 @@
-import os, re, io
+import os, re
 import gzip, zipfile, tarfile
-import xml.etree.ElementTree as ET
+import xml.etree.cElementTree as ET
 from xml.sax.saxutils import escape
-
-import pdb
 
 
 class BadCorpusError(Exception):
@@ -114,10 +112,6 @@ class EnCzWordReader(CorpusReader):
 
 
 class OpenSubtitlesReader(CorpusReader):
-	def __init__(self, corpus_path, language):
-		super().__init__(corpus_path)
-		self.language = language
-
 	def extract_sentences(self, filename):
 		if self.corpus_type == 'dir':
 			file = gzip.open(filename)
@@ -130,6 +124,12 @@ class OpenSubtitlesReader(CorpusReader):
 
 		tree = ET.parse(file)
 		root = tree.getroot()
-		sentences = [''.join(elem.itertext()).strip() for elem in root]
+		sentences = []
+		for elem in root:
+			if elem.tag == 's':
+				sentence = ''.join(elem.itertext()).strip()
+				if sentence:
+					sentences.append(sentence)
+
 		return sentences
 

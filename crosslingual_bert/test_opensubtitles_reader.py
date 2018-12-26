@@ -1,17 +1,15 @@
-import unittest
-import unittest.mock as mock
-
 from corpus import OpenSubtitlesReader
 
 print("Starting smoke test for OpenSubtitlesReader")
 
-reader = OpenSubtitlesReader("data/opensubtitles/sample.en.tar.gz", 'en')
+reader = OpenSubtitlesReader("data/opensubtitles/sample.en.tar.gz")
 for file in reader.files:
 	assert file.endswith('.xml.gz')
 
 print("passed file fetching test")
 
 for file in reader:
+	assert file
 	for sentence in file:
 		assert type(sentence) is str
 		assert sentence

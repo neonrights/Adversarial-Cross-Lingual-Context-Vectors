@@ -2,6 +2,7 @@ import os, re
 import gzip, zipfile, tarfile
 import xml.etree.cElementTree as ET
 from xml.sax.saxutils import escape
+from xml.etree.ElementTree import ParseError
 
 
 class BadCorpusError(Exception):
@@ -116,20 +117,28 @@ class OpenSubtitlesReader(CorpusReader):
 		if self.corpus_type == 'dir':
 			file = gzip.open(filename)
 		elif self.corpus_type == 'tar':
-			file = gzip.open(self.corpus.extractfile(filename))
+			gzfile = self.corpus.extractfile(filename)
+			file = gzip.open(gzfile)
 		elif self.corpus_type == 'zip':
-			file = gzip.open(self.corpus.extract(filename))
+			gzfile = self.corpus.extractfile(filename)
+			file = gzip.open(gzfile)
 		else:
 			raise BadCorpusError("corpus was not a directory or tarball")
 
-		tree = ET.parse(file)
-		root = tree.getroot()
-		sentences = []
-		for elem in root:
-			if elem.tag == 's':
-				sentence = ''.join(elem.itertext()).strip()
-				if sentence:
-					sentences.append(sentence)
+		try:
+			tree = ET.parse(file)
+			root = tree.getroot()
+			sentences = []
+			for elem in root:
+				if elem.tag == 's':
+					sentence = ''.join(elem.itertext()).strip()
+					if sentence:
+						sentences.append(sentence)
 
-		return sentences
-
+			return sentences
+		except ParseError:
+			return []
+		finally:
+			file.close()
+			if self.corpus_type != 'dir':
+				gzfile.close()

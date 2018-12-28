@@ -1,5 +1,9 @@
-import random, json, itertools
-import torch, tqdm
+import random
+import json
+import itertools
+import numpy as np
+import torch
+import tqdm
 from torch.utils.data import Dataset
 import pdb
 
@@ -39,9 +43,17 @@ class LanguageDataset(Dataset):
                     self.corpus_lines += 1
 
             if on_memory:
-                self.lines = [[self.tokenizer.tokenize_and_convert_to_ids(sentence) for sentence in line.split('\t')]
-                              for line in tqdm.tqdm(f, desc="Loading Dataset", total=corpus_lines)]
+                self.lines = []
+                for line in tqdm.tqdm(f, desc="Loading Dataset", total=corpus_lines):
+                    sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
+                            for sentence in line.split('\t')]
+
+                    if sentences and len(sentences[0]) < self.max_seq_len and len(sentences) > 1:
+                        self.lines.append(sentences)
+
                 self.corpus_lines = len(self.lines)
+
+            print(self.corpus_lines)
 
         if not on_memory:
             self.file = open(corpus_path, "r", encoding=encoding)
@@ -56,20 +68,27 @@ class LanguageDataset(Dataset):
     def __getitem__(self, item):
         sample = self.get_corpus_line(item)
         s1, s2, is_next = self.random_sentences(sample)
+        assert len(s1) > 0
+        assert len(s2) > 0 
         s1_random, s1_label = self.random_word(s1)
         s2_random, s2_label = self.random_word(s2)
 
         # [CLS] tag = SOS tag, [SEP] tag = EOS tag
-        s1_ids = [self.tokenizer.vocab['[CLS]']] + s1_random + [self.tokenizer.vocab['[SEP]']]
-        s2_ids = s2_random + [self.tokenizer.vocab['[SEP]']]
+        s1_ids = np.hstack((self.tokenizer.vocab['[CLS]'], s1_random, self.tokenizer.vocab['[SEP]']))
+        s2_ids = np.hstack((s2_random, self.tokenizer.vocab['[SEP]']))
 
-        segment_label = ([1 for _ in range(len(s1_ids))] + [2 for _ in range(len(s2_ids))])[:self.max_seq_len]
-        input_ids = (s1_ids + s2_ids)[:self.max_seq_len]
-        token_labels = ([0] + s1_label + [0] + s2_label + [0])[:self.max_seq_len]
+        segment_label = np.append(np.ones_like(s1_ids), 2*np.ones_like(s2_ids))[:self.max_seq_len]
+        input_ids = np.append(s1_ids, s2_ids)[:self.max_seq_len]
+        token_labels = np.hstack((0, s1_label, 0, s2_label, 0))[:self.max_seq_len]
 
-        padding = [0 for _ in range(self.max_seq_len - len(input_ids))]
-        mask = [1 for _ in range(len(input_ids))] + [0 for _ in range(len(padding))]
-        input_ids.extend(padding), token_labels.extend(padding), segment_label.extend(padding)
+        if self.max_seq_len - len(input_ids) > 0:
+            padding = np.zeros(self.max_seq_len - len(input_ids), dtype=np.long)
+            mask = np.hstack((np.ones_like(input_ids), np.zeros_like(padding)))
+            input_ids = np.append(input_ids, padding)
+            token_labels = np.append(token_labels, padding)
+            segment_label = np.append(segment_label, padding)
+        else:
+            mask = np.ones(self.max_seq_len, dtype=np.long)
 
         output = {"input_ids": input_ids,
                   "token_labels": token_labels,
@@ -81,7 +100,7 @@ class LanguageDataset(Dataset):
 
     def random_word(self, sample):
         ids = sample.copy()
-        output_label = [0] * len(sample)
+        output_label = np.zeros_like(sample)
 
         for i in range(len(sample)):
             prob = random.random()
@@ -103,20 +122,21 @@ class LanguageDataset(Dataset):
         max_split = 0
         token_count = 2 # extra two for sos_token and eos_token
         for sentence in sample:
-            token_count += len(sentence) + 1
+            token_count += len(sentence)
             if token_count >= self.max_seq_len:
                 break
             max_split += 1
 
-        if max_split == 0:
-            pdb.set_trace()
+        if max_split == 1:
+            split = 1
+        else:
+            split = random.randrange(1, max_split)
 
-        split = random.randrange(max_split)
-        s1 = list(itertools.chain.from_iterable(sample[:split]))
+        s1 = np.hstack(sample[:split])
 
         # shorten s1 so it is less than max seq len
         if random.random() > 0.5:
-            return s1, list(itertools.chain.from_iterable(sample[split:])), 1
+            return s1, np.hstack(sample[split:]), 1
         else:
             return s1, self.get_random_line(), 0
 
@@ -130,7 +150,7 @@ class LanguageDataset(Dataset):
                 self.file = open(self.corpus_path, "r", encoding=self.encoding)
                 line = self.file.__next__()
 
-            return [self.tokenizer.tokenize_and_convert_to_ids(sentence)
+            return [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
                     for sentence in line.split('\t')]
 
     def get_random_line(self):
@@ -145,11 +165,14 @@ class LanguageDataset(Dataset):
                     self.random_file.__next__()
                 line = self.random_file.__next__()
             
-            sample = [self.tokenizer.tokenize_and_convert_to_ids(sentence)
+            sample = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
                     for sentence in line.split('\t')]
 
-        split = random.randrange(len(sample))
-        return list(itertools.chain.from_iterable(sample[:split]))
+        if len(sample) == 1:
+            split = 1
+        else:
+            split = random.randrange(1, len(sample))
+        return np.hstack(sample[:split])
 
 
 class LanguageSwapDataset(Dataset):

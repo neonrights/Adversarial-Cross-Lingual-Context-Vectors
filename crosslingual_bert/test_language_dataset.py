@@ -1,66 +1,74 @@
-from torch.utils.data import DataLoader
-from dataset import LanguageDataset, JSONVocab, BertTokenizer
+import unittest
 import tqdm
+from torch.utils.data import DataLoader
 
-print("Running unit tests for LanguageDataset...")
+from dataset import LanguageDataset, JSONVocab, BertTokenizer
 
-batch_size = 8
-max_seq_len = 256
 
-tokenizer = BertTokenizer('data/bert-base-multilingual-cased-vocab.txt')
-language_data = LanguageDataset('all.sample.en.txt', tokenizer, max_seq_len=max_seq_len)
-language_loader = DataLoader(language_data, batch_size=batch_size, shuffle=True)
-print("passed on memory initialization tests")
+class TestLanguageDataset(unittest.TestCase):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.batch_size = 16
+		self.max_seq_len = 256
+		self.num_workers = 8
+		self.tokenizer = BertTokenizer('data/bert-base-multilingual-cased-vocab.txt')
 
-for i, batch in enumerate(language_loader):
-	assert type(batch) is dict, "expected dict for batch object, got {}".format(type(batch))
-	assert batch.keys() == {"input_ids", "token_labels", "segment_label", "is_next", "mask"},\
-			"did not get expected keys in batch dict"
-	for key, value in batch.items():
-		if len(value.shape) == 1:
-			assert value.shape == (batch_size,), "expected {} but got {}".format((batch_size,), value.shape)
-		else:
-			assert value.shape[:2] == (batch_size, max_seq_len), "expected {} but got {}".format((batch_size, max_seq_len), value.shape[:2])
+	def test_on_memory(self):
+		language_data = LanguageDataset('en', 'all.sample.en.txt', self.tokenizer, max_seq_len=self.max_seq_len)
+		language_loader = DataLoader(language_data, batch_size=self.batch_size, shuffle=True, drop_last=True)
 
-	if i > 1000:
-		break
+		for i, batch in tqdm.tqdm(enumerate(language_loader), total=len(language_loader), desc="on memory test"):
+			self.assertTrue(type(batch) is dict, "expected dict for batch object, got {}".format(type(batch)))
+			self.assertTrue(batch.keys() == {"input_ids", "token_labels", "segment_label", "is_next", "mask"}, 
+					"did not get expected keys in batch dict")
+			for key, value in batch.items():
+				if len(value.shape) == 1:
+					self.assertTrue(value.shape == (self.batch_size,), "expected {} but got {}".format((self.batch_size,), value.shape))
+				else:
+					self.assertTrue(value.shape[:2] == (self.batch_size, self.max_seq_len), "expected {} but got {}".format((self.batch_size, self.max_seq_len), value.shape[:2]))
 
-print("passed on memory batch tests")
+	def test_off_memory(self):
+		language_data = LanguageDataset('en', 'all.sample.en.txt', self.tokenizer, max_seq_len=self.max_seq_len, on_memory=False)
+		language_loader = DataLoader(language_data, batch_size=self.batch_size, drop_last=True)
 
-language_data = LanguageDataset('all.sample.en.txt', tokenizer, max_seq_len=max_seq_len, on_memory=False)
-language_loader = DataLoader(language_data, batch_size=batch_size, shuffle=True)
-print("passed off memory initialization tests")
+		for i, batch in tqdm.tqdm(enumerate(language_loader), total=len(language_loader), desc="off memory test"):
+			self.assertTrue(type(batch) is dict, "expected dict for batch object, got {}".format(type(batch)))
+			self.assertTrue(batch.keys() == {"input_ids", "token_labels", "segment_label", "is_next", "mask"}, 
+					"did not get expected keys in batch dict")
+			for key, value in batch.items():
+				if len(value.shape) == 1:
+					self.assertTrue(value.shape == (self.batch_size,), "expected {} but got {}".format((self.batch_size,), value.shape))
+				else:
+					self.assertTrue(value.shape[:2] == (self.batch_size, self.max_seq_len), "expected {} but got {}".format((self.batch_size, self.max_seq_len), value.shape[:2]))
 
-for i, batch in enumerate(language_loader):
-	assert type(batch) is dict, "expected dict for batch object, got {}".format(type(batch))
-	assert batch.keys() == {"input_ids", "token_labels", "segment_label", "is_next", "mask"},\
-			"did not get expected keys in batch dict"
-	for key, value in batch.items():
-		if len(value.shape) == 1:
-			assert value.shape == (batch_size,), "expected {} but got {}".format((batch_size,), value.shape)
-		else:
-			assert value.shape[:2] == (batch_size, max_seq_len), "expected {} but got {}".format((batch_size, max_seq_len), value.shape[:2])
+	def test_on_memory_workers(self):
+		language_data = LanguageDataset('en', 'all.sample.en.txt', self.tokenizer, max_seq_len=self.max_seq_len)
+		language_loader = DataLoader(language_data, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
 
-	if i > 1000:
-		break
+		for i, batch in tqdm.tqdm(enumerate(language_loader), total=len(language_loader), desc="on memory w/ workers"):
+			self.assertTrue(type(batch) is dict, "expected dict for batch object, got {}".format(type(batch)))
+			self.assertTrue(batch.keys() == {"input_ids", "token_labels", "segment_label", "is_next", "mask"}, 
+					"did not get expected keys in batch dict")
+			for key, value in batch.items():
+				if len(value.shape) == 1:
+					self.assertTrue(value.shape == (self.batch_size,), "expected {} but got {}".format((self.batch_size,), value.shape))
+				else:
+					self.assertTrue(value.shape[:2] == (self.batch_size, self.max_seq_len), "expected {} but got {}".format((self.batch_size, self.max_seq_len), value.shape[:2]))
 
-print("passed off memory batch tests")
+	def test_off_memory_workers(self):
+		language_data = LanguageDataset('en', 'all.sample.en.txt', self.tokenizer, max_seq_len=self.max_seq_len, on_memory=False)
+		language_loader = DataLoader(language_data, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
 
-language_data = LanguageDataset('all.sample.en.txt', tokenizer, max_seq_len=max_seq_len)
-language_loader = DataLoader(language_data, batch_size=batch_size, shuffle=True, num_workers=4)
-print("passed multiple worker initialization tests")
+		for i, batch in tqdm.tqdm(enumerate(language_loader), total=len(language_loader), desc="off memory w/ workers"):
+			self.assertTrue(type(batch) is dict, "expected dict for batch object, got {}".format(type(batch)))
+			self.assertTrue(batch.keys() == {"input_ids", "token_labels", "segment_label", "is_next", "mask"}, 
+					"did not get expected keys in batch dict")
+			for key, value in batch.items():
+				if len(value.shape) == 1:
+					self.assertTrue(value.shape == (self.batch_size,), "expected {} but got {}".format((self.batch_size,), value.shape))
+				else:
+					self.assertTrue(value.shape[:2] == (self.batch_size, self.max_seq_len), "expected {} but got {}".format((self.batch_size, self.max_seq_len), value.shape[:2]))
 
-for i, batch in enumerate(language_loader):
-	assert type(batch) is dict, "expected dict for batch object, got {}".format(type(batch))
-	assert batch.keys() == {"input_ids", "token_labels", "segment_label", "is_next", "mask"},\
-			"did not get expected keys in batch dict"
-	for key, value in batch.items():
-		if len(value.shape) == 1:
-			assert value.shape == (batch_size,), "expected {} but got {}".format((batch_size,), value.shape)
-		else:
-			assert value.shape[:2] == (batch_size, max_seq_len), "expected {} but got {}".format((batch_size, max_seq_len), value.shape[:2])
 
-	if i > 1000:
-		break
-
-print("passed multiple worker batch tests")
+if __name__ == '__main__':
+	unittest.main()

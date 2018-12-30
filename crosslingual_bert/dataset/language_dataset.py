@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import tqdm
 from torch.utils.data import Dataset
-import pdb
+
 
 class ProbConfig:
     """
@@ -22,8 +22,9 @@ class LanguageDataset(Dataset):
     """
     pytorch dataset that loads training/test dataset for a specific language
     """
-    def __init__(self, corpus_path, tokenizer, max_seq_len,
-                encoding="utf-8", corpus_lines=None, on_memory=True, prob_config=ProbConfig()):
+    def __init__(self, language, corpus_path, tokenizer, max_seq_len,
+                encoding="utf-8", corpus_lines=None, on_memory=True, prob_config=ProbConfig(), position=0):
+        self.language = language
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         
@@ -39,28 +40,26 @@ class LanguageDataset(Dataset):
         with open(corpus_path, "r", encoding=encoding) as f:
             if self.corpus_lines is None and not on_memory:
                 self.corpus_lines = 0
-                for _ in tqdm.tqdm(f, desc="Loading Dataset", total=corpus_lines):
+                for _ in tqdm.tqdm(f, desc="Loading Dataset %s" % self.language, total=corpus_lines, position=position):
                     self.corpus_lines += 1
 
             if on_memory:
                 self.lines = []
-                for line in tqdm.tqdm(f, desc="Loading Dataset", total=corpus_lines):
-                    sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
-                            for sentence in line.split('\t')]
-
-                    if sentences and len(sentences[0]) < self.max_seq_len and len(sentences) > 1:
-                        self.lines.append(sentences)
+                for line in tqdm.tqdm(f, desc="Loading Dataset %s" % self.language, total=corpus_lines, position=position):
+                    sentences = line.split('\t')
+                    if sentences and len(sentences) > 1:
+                        sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
+                                for sentence in sentences]
+                        if (len(sentences[0]) + 2) < self.max_seq_len:
+                            self.lines.append(sentences)
 
                 self.corpus_lines = len(self.lines)
 
-            print(self.corpus_lines)
-
         if not on_memory:
-            self.file = open(corpus_path, "r", encoding=encoding)
-            self.random_file = open(corpus_path, "r", encoding=encoding)
-
-            for _ in range(random.randrange(self.corpus_lines if self.corpus_lines < 1000 else 1000)):
-                self.random_file.__next__()
+            self.file = self._get_file_generator()
+            self.random_file = self._get_file_generator()
+            """for _ in range(random.randrange(self.corpus_lines-1 if self.corpus_lines < 1000 else 1000)):
+                next(self.random_file)"""
 
     def __len__(self):
         return self.corpus_lines
@@ -127,52 +126,61 @@ class LanguageDataset(Dataset):
                 break
             max_split += 1
 
-        if max_split == 1:
-            split = 1
-        else:
-            split = random.randrange(1, max_split)
-
+        split = 1 if max_split == 1 else random.randrange(1, max_split)
         s1 = np.hstack(sample[:split])
 
         # shorten s1 so it is less than max seq len
         if random.random() > 0.5:
             return s1, np.hstack(sample[split:]), 1
         else:
-            return s1, self.get_random_line(), 0
+            return s1, np.hstack(self.get_random_line()), 0
 
     def get_corpus_line(self, item):
         if self.on_memory:
             return self.lines[item]
-        else:
-            line = self.file.__next__()
-            if line is None:
-                self.file.close()
-                self.file = open(self.corpus_path, "r", encoding=self.encoding)
-                line = self.file.__next__()
+    
+        line = next(self.file)
+        if line is None:
+            self.file = self._get_file_generator()
+            line = next(self.file)
 
-            return [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
+        sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
                     for sentence in line.split('\t')]
+        if not sentences or len(sentences) < 2 or (len(sentences[0]) + 2) >= self.max_seq_len:
+            return self.get_random_line(split=False)
+        else:
+            return sentences
 
-    def get_random_line(self):
+    def get_random_line(self, split=True):
         if self.on_memory:
             sample = self.lines[random.randrange(len(self.lines))]
         else:
-            line = self.file.__next__()
-            if line is None:
-                self.file.close()
-                self.file = open(self.corpus_path, "r", encoding=self.encoding)
-                for _ in range(random.randint(self.corpus_lines if self.corpus_lines < 1000 else 1000)):
-                    self.random_file.__next__()
-                line = self.random_file.__next__()
-            
-            sample = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
-                    for sentence in line.split('\t')]
+            sample = None
+            while sample is None or len(sample) < 1 or (len(sample[0]) + 2) >= self.max_seq_len:
+                line = next(self.random_file)
+                if line is None:
+                    self.random_file = self._get_file_generator()
+                    line = next(self.random_file)
+                """line = next(self.random_file)
+                if line is None:
+                    self.randomfile = self._get_file_generator()
+                    for _ in range(random.randrange(self.corpus_lines-1 if self.corpus_lines < 1000 else 1000)):
+                        next(self.random_file)
+                    line = next(self.random_file)"""
 
-        if len(sample) == 1:
-            split = 1
+                sample = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
+                        for sentence in line.split('\t')]
+
+        if split:
+            split = 0 if len(sample) == 1 else random.randrange(len(sample)-1)
+            return sample[split:]
         else:
-            split = random.randrange(1, len(sample))
-        return np.hstack(sample[:split])
+            return sample
+
+    def _get_file_generator(self):
+        with open(self.corpus_path, 'r') as f:
+            for line in f:
+                yield line
 
 
 class LanguageSwapDataset(Dataset):

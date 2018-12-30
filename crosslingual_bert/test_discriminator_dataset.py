@@ -1,53 +1,60 @@
+import unittest
+import tqdm
 from torch.utils.data import DataLoader
 
 from dataset import DiscriminatorDataset, BertTokenizer
-import tqdm
 
 print("Running unit tests for DiscriminatorDataset")
 
-batch_size = 8
-max_seq_len = 256
-ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
+class TestDiscriminatorDataset(unittest.TestCase):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.batch_size = 8
+		self.max_seq_len = 256
+		self.ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
+		self.num_workers = 8
+		self.tokenizer = BertTokenizer('data/bert-base-multilingual-cased-vocab.txt')
 
-tokenizer = BertTokenizer('data/bert-base-multilingual-cased-vocab.txt')
-D_data = DiscriminatorDataset("sample.disc.raw.txt", tokenizer, ltoi, max_seq_len)
-D_loader = DataLoader(D_data, batch_size=batch_size, shuffle=True)
-print("passed on memory initialization tests")
+	def test_on_memory(self):
+		D_data = DiscriminatorDataset("sample.disc.raw.txt", self.tokenizer, self.ltoi, self.max_seq_len)
+		D_loader = DataLoader(D_data, batch_size=self.batch_size, shuffle=True, drop_last=True)
 
-for i, batch in enumerate(D_loader):
-	assert batch["input_ids"].shape == (batch_size, max_seq_len),\
-			"got {} for input shape instead of {}".format(inputs_ids.shape, (batch_size, max_seq_len))
-	assert batch["language_label"].shape == (batch_size,),\
-			"got {} for label shape instead of {}".format(labels.shape, (batch_size,))
-	if i > 1000:
-		break
+		for i, batch in tqdm.tqdm(enumerate(D_loader), total=len(D_loader), desc="on memory test"):
+			self.assertTrue(batch["input_ids"].shape == (self.batch_size, self.max_seq_len),
+					"got {} for input shape instead of {}".format(batch["input_ids"].shape, (self.batch_size, self.max_seq_len)))
+			self.assertTrue(batch["language_label"].shape == (self.batch_size,),
+					"got {} for label shape instead of {}".format(batch["language_label"].shape, (self.batch_size,)))
 
-print("passed on memory batch tests")
+	def test_off_memory(self):
+		D_data = DiscriminatorDataset('sample.disc.raw.txt', self.tokenizer, self.ltoi, self.max_seq_len, on_memory=False)
+		D_loader = DataLoader(D_data, batch_size=self.batch_size, drop_last=True)
 
-D_data = DiscriminatorDataset('sample.disc.raw.txt', tokenizer, ltoi, max_seq_len, on_memory=False)
-D_loader = DataLoader(D_data, batch_size=batch_size, shuffle=True)
-print("passed off memory initialization tests")
+		for i, batch in tqdm.tqdm(enumerate(D_loader), total=len(D_loader), desc="off memory test"):
+			self.assertTrue(batch["input_ids"].shape == (self.batch_size, self.max_seq_len),
+					"got {} for input shape instead of {}".format(batch["input_ids"].shape, (self.batch_size, self.max_seq_len)))
+			self.assertTrue(batch["language_label"].shape == (self.batch_size,),
+					"got {} for label shape instead of {}".format(batch["language_label"].shape, (self.batch_size,)))
 
-for i, batch in enumerate(D_loader):
-	assert batch["input_ids"].shape == (batch_size, max_seq_len),\
-			"got {} for input shape instead of {}".format(inputs_ids.shape, (batch_size, max_seq_len))
-	assert batch["language_label"].shape == (batch_size,),\
-			"got {} for label shape instead of {}".format(labels.shape, (batch_size,))
-	if i > 1000:
-		break
+	def test_on_memory_workers(self):
+		D_data = DiscriminatorDataset('sample.disc.raw.txt', self.tokenizer, self.ltoi, self.max_seq_len)
+		D_loader = DataLoader(D_data, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
 
-print("passed off memory batch tests")
+		for i, batch in tqdm.tqdm(enumerate(D_loader), total=len(D_loader), desc="on memory w/ workers"):
+			self.assertTrue(batch["input_ids"].shape == (self.batch_size, self.max_seq_len),
+					"got {} for input shape instead of {}".format(batch["input_ids"].shape, (self.batch_size, self.max_seq_len)))
+			self.assertTrue(batch["language_label"].shape == (self.batch_size,),
+					"got {} for label shape instead of {}".format(batch["language_label"].shape, (self.batch_size,)))
 
-D_data = DiscriminatorDataset('sample.disc.raw.txt', tokenizer, ltoi, max_seq_len)
-D_loader = DataLoader(D_data, batch_size=batch_size, shuffle=True, num_workers=4)
-print("passed multiple worker initialization tests")
+	def test_off_memory_workers(self):
+		D_data = DiscriminatorDataset('sample.disc.raw.txt', self.tokenizer, self.ltoi, self.max_seq_len, on_memory=False)
+		D_loader = DataLoader(D_data, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
 
-for i, batch in enumerate(D_loader):
-	assert batch["input_ids"].shape == (batch_size, max_seq_len),\
-			"got {} for input shape instead of {}".format(inputs_ids.shape, (batch_size, max_seq_len))
-	assert batch["language_label"].shape == (batch_size,),\
-			"got {} for label shape instead of {}".format(labels.shape, (batch_size,))
-	if i > 1000:
-		break
+		for i, batch in tqdm.tqdm(enumerate(D_loader), total=len(D_loader), desc="off memory w/ workers"):
+			self.assertTrue(batch["input_ids"].shape == (self.batch_size, self.max_seq_len),
+					"got {} for input shape instead of {}".format(batch["input_ids"].shape, (self.batch_size, self.max_seq_len)))
+			self.assertTrue(batch["language_label"].shape == (self.batch_size,),
+					"got {} for label shape instead of {}".format(batch["language_label"].shape, (self.batch_size,)))
 
-print("passed multiple worker batch tests")
+
+if __name__ == '__main__':
+	unittest.main()

@@ -8,6 +8,7 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 
 from .optimization import BERTAdam
+from .utils import *
 
 import tqdm
 
@@ -102,17 +103,9 @@ class AdversarialBertWrapper(nn.Module):
 
 
 class AdversarialPretrainer:
+    """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
-    BERTTrainer make the pretrained BERT model with two LM training method.
-
-        1. Masked Language Model : 3.3.1 Task #1: Masked LM
-        2. Next Sentence prediction : 3.3.2 Task #2: Next Sentence Prediction
-
-    please check the details on README.md with simple example.
-
-    """
-
-    def __init__(self, multilingual_model, config, languages, train_data, test_data,
+    def __init__(self, multilingual_model, config, languages, train_data, test_data=None,
                 adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4, with_cuda=True, log_freq=10):
         """
         :param bert: BERT model which you want to train
@@ -137,7 +130,7 @@ class AdversarialPretrainer:
 
         # get data
         self.train_data = train_data
-        self.test_data = test_data
+        self.test_data = test_data if test_data else train_data
         
         # initialize loss function and optimizers
         self.D_repeat = adv_repeat
@@ -198,11 +191,12 @@ class AdversarialPretrainer:
                     epoch+1, repeat+1, total_loss / len(D_iter), total_correct / total_elements))
 
         micro_loss = 0
-        for language, language_label in self.ltoi.items():
-            language_iter = tqdm.tqdm(enumerate(data[language]),
-                    desc="{}_{}:{}".format(language, str_code, epoch+1,
-                    total=len(data[language])))
+        language_iter = IterDict({language: data[language] for language in self.ltoi})
+        language_iter = tqdm.tqdm(enumerate(language_iter),
+                desc="{}:{}".format(str_code, epoch+1),
+                total=len(language_iter))
 
+        for i, batches in language_iter:
             total_mask_loss = 0
             total_next_loss = 0
             total_adv_loss = 0
@@ -211,7 +205,12 @@ class AdversarialPretrainer:
             total_mask_elements = 0
             total_next_correct = 0
             total_next_elements = 0
-            for i, batch in language_iter:
+            for language, language_label in self.ltoi.items():
+                try:
+                    batch = batches[language]
+                except KeyError:
+                    continue
+
                 batch = {key: value.to(self.device) for key, value in batch.items()}
                 mask_logits, next_logits, language_logits, diff_loss = self.model(language, batch['input_ids'], batch['segment_label'], batch['mask'])
 
@@ -255,7 +254,6 @@ class AdversarialPretrainer:
                     with open(language + '.log', 'a') as f:
                         f.write(json.dumps(post_fix) + '\n')
 
-
             avg_mask_loss = total_mask_loss / len(data[language])
             avg_next_loss = total_next_loss / len(data[language])
             avg_adv_loss = total_adv_loss / len(data[language])
@@ -274,7 +272,7 @@ class AdversarialPretrainer:
         return micro_loss / (len(data) - 1)
 
 
-    def save(self, epoch, directory_path="output/"):
+    def save(self, epoch, directory_path="output/", savename=None):
         """
         Saving the current BERT model on file_path
 
@@ -285,7 +283,10 @@ class AdversarialPretrainer:
         if not os.path.isdir(directory_path):
             os.mkdir(directory_path)
 
-        torch.save(self.model.cpu(), os.path.join(directory_path, "epoch%d.model" % epoch))
+        if savename is None:
+            savename = "epoch.%d.model" % epoch
+
+        torch.save(self.model.cpu(), os.path.join(directory_path, savename))
 
         print("EP:%d Model Saved in:" % epoch, directory_path)
         return directory_path

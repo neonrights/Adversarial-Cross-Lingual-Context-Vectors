@@ -15,6 +15,8 @@ class MultilingualBert(nn.Module):
 		super().__init__()
 		self.shared = BertModel(config)
 		self.private = {language: BertModel(config) for language in languages}
+		for language, model in self.private.items():
+			super().add_module(language, model)
 	
 	def forward(self, language, input_ids, token_type_ids=None, attention_mask=None):
 		assert language in self.private

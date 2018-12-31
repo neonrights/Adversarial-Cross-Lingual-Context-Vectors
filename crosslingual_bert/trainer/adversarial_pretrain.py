@@ -136,7 +136,7 @@ class AdversarialPretrainer:
         # initialize loss function and optimizers
         self.D_repeat = adv_repeat
         self.criterion = nn.NLLLoss()   
-        self.mask_criterion = nn.NLLLoss(ignore_index=0)     
+        self.mask_criterion = nn.NLLLoss(ignore_index=0)
         self.D_optim = Adam(self.model.component_parameters("adversary"), lr)
         self.lm_optims = {language: BERTAdam(self.model.component_parameters(language), lr) for language in languages}
 
@@ -178,7 +178,7 @@ class AdversarialPretrainer:
                 for i, batch in D_iter:
                     batch = {key: value.to(self.device) for key, value in batch.items()}
                     logits = self.model.forward("adversary", batch["input_ids"], attention_mask=batch['mask'])
-                    loss = self.criterion(logits, batch['language_label'])
+                    loss = self.criterion(logits, batch['language_label']).to(self.device)
                     
                     total_loss += loss.detach().item()
                     total_correct += logits.argmax(-1).eq(batch['language_label']).sum().detach().item()
@@ -219,8 +219,8 @@ class AdversarialPretrainer:
                 mask_logits, next_logits, language_logits, diff_loss =\
                         self.model(language, batch['input_ids'], token_type_ids=batch['segment_label'], attention_mask=batch['mask'])
 
-                mask_loss = self.mask_criterion(mask_logits.transpose(1,2), batch['token_labels'])
-                next_loss = self.criterion(next_logits, batch['is_next'])
+                mask_loss = self.mask_criterion(mask_logits.transpose(1,2), batch['token_labels']).to(self.device)
+                next_loss = self.criterion(next_logits, batch['is_next']).to(self.device)
                 language_labels = language_label + torch.zeros(language_logits.size(0), dtype=torch.long)
                 adv_loss = -self.criterion(language_logits, language_labels.to(self.device)) # TODO correct loss
 
@@ -248,18 +248,18 @@ class AdversarialPretrainer:
         avg_loss = total_loss / total_samples
         avg_mask_loss = total_mask_loss / total_mask_elements
         avg_next_loss = total_next_loss / total_samples
-        avg_adv_loss = total_adv_loss / total_samples
-        avg_diff_loss = total_diff_loss / total_samples
+        avg_adv_loss = self.beta * total_adv_loss / total_samples
+        avg_diff_loss = self.gamma * total_diff_loss  / total_samples
         mask_acc = total_mask_correct / total_mask_elements
         next_acc = total_next_correct / total_samples
 
         print("EP{0}_{1}_{2}:\nmask={3:.6f}\tnext={4:.6f}\tadv={5:.6f}\ndiff={6:.6f}\tmask_acc={7:.6f}\tnext_acc={8:.6f}".format(
-                epoch+1, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, mask_acc, next_acc))
+                epoch, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, mask_acc, next_acc))
 
         return avg_loss
 
 
-    def save(self, epoch, directory_path="output/", savename=None):
+    def save(self, epoch, directory_path="output", save_name=None):
         """
         Saving the current BERT model on file_path
 
@@ -270,10 +270,10 @@ class AdversarialPretrainer:
         if not os.path.isdir(directory_path):
             os.mkdir(directory_path)
 
-        if savename is None:
-            savename = "epoch.%d.model" % epoch
+        if save_name is None:
+            save_name = "epoch.%d.model" % epoch
 
-        save_path = os.path.join(directory_path, savename)
+        save_path = os.path.join(directory_path, save_name)
         torch.save(self.model.cpu(), save_path)
         self.model.to(self.device)
 

@@ -11,6 +11,7 @@ from .optimization import BERTAdam
 from .utils import *
 
 import tqdm
+import pdb
 
 
 class NextSentencePrediction(nn.Module):
@@ -106,7 +107,7 @@ class AdversarialPretrainer:
     """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
     def __init__(self, multilingual_model, config, languages, train_data, test_data=None,
-                adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4, with_cuda=True, log_freq=10):
+                adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4, with_cuda=True, log_freq=1000):
         """
         :param bert: BERT model which you want to train
         :param vocab_size: total word vocab size
@@ -126,7 +127,7 @@ class AdversarialPretrainer:
         # initialize public, private, and adversarial discriminator
         self.ltoi = languages
         self.model = AdversarialBertWrapper(multilingual_model, len(languages), config)
-        self.model.to(self.device)
+        self.model = self.model.to(self.device)
 
         # get data
         self.train_data = train_data
@@ -146,10 +147,10 @@ class AdversarialPretrainer:
         self.log_freq = log_freq
 
     def train(self, epoch):
-        self.iteration(epoch, self.train_data)
+        return self.iteration(epoch, self.train_data)
 
     def test(self, epoch):
-        self.iteration(epoch, self.test_data, train=False)
+        return self.iteration(epoch, self.test_data, train=False)
 
     def iteration(self, epoch, data, train=True):
         """
@@ -164,31 +165,32 @@ class AdversarialPretrainer:
         """
         str_code = "train" if train else "test"
 
-        for repeat in range(self.D_repeat):
-            # for batch in batches
-            D_iter = tqdm.tqdm(enumerate(data["adversary"]),
-                    desc="D_train:{}:{}/{}".format(epoch+1, repeat+1, self.D_repeat),
-                    total=len(data["adversary"]))
+        if train:
+            for repeat in range(self.D_repeat):
+                # for batch in batches
+                D_iter = tqdm.tqdm(enumerate(data["adversary"]),
+                        desc="D_train:{}:{}/{}".format(epoch+1, repeat+1, self.D_repeat),
+                        total=len(data["adversary"]))
 
-            total_loss = 0
-            total_correct = 0
-            total_elements = 0
-            for i, batch in D_iter:
-                batch = {key: value.to(self.device) for key, value in batch.items()}
-                logits = self.model.forward("adversary", batch["input_ids"], attention_mask=batch['mask'])
-                loss = self.criterion(logits, batch['language_label'])
-                
-                total_loss += loss.item()
-                total_correct += logits.argmax(-1).eq(batch['language_label']).sum().item()
-                total_elements += batch['language_label'].nelement()
+                total_loss = 0
+                total_correct = 0
+                total_elements = 0
+                for i, batch in D_iter:
+                    batch = {key: value.to(self.device) for key, value in batch.items()}
+                    logits = self.model.forward("adversary", batch["input_ids"], attention_mask=batch['mask'])
+                    loss = self.criterion(logits, batch['language_label'])
+                    
+                    total_loss += loss.detach().item()
+                    total_correct += logits.argmax(-1).eq(batch['language_label']).sum().detach().item()
+                    total_elements += batch['language_label'].detach().nelement()
 
-                if train:
-                    self.D_optim.zero_grad()
-                    loss.backward()
-                    self.D_optim.step()
+                    if train:
+                        self.D_optim.zero_grad()
+                        loss.backward()
+                        self.D_optim.step()
 
-            print("EP{0}_D_{1}: loss={2:.6f} acc={3:.6f}".format(
-                    epoch+1, repeat+1, total_loss / len(D_iter), total_correct / total_elements))
+                print("EP{0}_D_{1}: loss={2:.6f} acc={3:.6f}".format(
+                        epoch+1, repeat+1, total_loss / len(D_iter), total_correct / total_elements))
 
         micro_loss = 0
         language_iter = IterDict({language: data[language] for language in self.ltoi})
@@ -196,15 +198,17 @@ class AdversarialPretrainer:
                 desc="{}:{}".format(str_code, epoch+1),
                 total=len(language_iter))
 
+        total_mask_loss = 0.
+        total_next_loss = 0.
+        total_adv_loss = 0.
+        total_diff_loss = 0.
+        total_loss = 0.
+
+        total_mask_correct = 0
+        total_mask_elements = 0
+        total_next_correct = 0
+        total_samples = 0
         for i, batches in language_iter:
-            total_mask_loss = 0
-            total_next_loss = 0
-            total_adv_loss = 0
-            total_diff_loss = 0
-            total_mask_correct = 0
-            total_mask_elements = 0
-            total_next_correct = 0
-            total_next_elements = 0
             for language, language_label in self.ltoi.items():
                 try:
                     batch = batches[language]
@@ -212,7 +216,8 @@ class AdversarialPretrainer:
                     continue
 
                 batch = {key: value.to(self.device) for key, value in batch.items()}
-                mask_logits, next_logits, language_logits, diff_loss = self.model(language, batch['input_ids'], batch['segment_label'], batch['mask'])
+                mask_logits, next_logits, language_logits, diff_loss =\
+                        self.model(language, batch['input_ids'], token_type_ids=batch['segment_label'], attention_mask=batch['mask'])
 
                 mask_loss = self.mask_criterion(mask_logits.transpose(1,2), batch['token_labels'])
                 next_loss = self.criterion(next_logits, batch['is_next'])
@@ -225,51 +230,33 @@ class AdversarialPretrainer:
                     train_loss.backward()
                     self.lm_optims[language].step()
 
-                micro_loss += train_loss.item()
-                total_mask_loss += mask_loss.item()
-                total_next_loss += next_loss.item()
-                total_adv_loss += adv_loss.item()
-                total_diff_loss += diff_loss.item()
+                total_loss += train_loss.detach().item()
                 
-                mask_correct = mask_logits.argmax(-1).eq(batch['token_labels'])
-                mask_elements = (batch['token_labels'] > 0)
-                total_mask_correct += (mask_correct & mask_elements).sum().item()
-                total_mask_elements += mask_elements.sum().item()
+                total_mask_loss += mask_loss.detach().item()
+                total_next_loss += next_loss.detach().item()
+                total_adv_loss += adv_loss.detach().item()
+                total_diff_loss += diff_loss.detach().item()
 
-                total_next_correct += next_logits.argmax(dim=-1).eq(batch['is_next']).sum().item()
-                total_next_elements += batch['is_next'].nelement()
+                mask_correct = mask_logits.argmax(-1).eq(batch['token_labels']).sum().detach().item()
+                mask_elements = (batch['token_labels'] > 0).sum().detach().item()
+                total_mask_correct += (mask_correct & mask_elements)
+                total_mask_elements += mask_elements
 
-                if i % self.log_freq == 0:
-                    post_fix = {
-                        "epoch": epoch+1,
-                        "language": language,
-                        "iter": i+1,
-                        "mask_loss": total_mask_loss / (i + 1),
-                        "next_loss": total_next_loss / (i + 1),
-                        "adversary_loss": total_adv_loss / (i + 1),
-                        "difference_loss": total_diff_loss / (i + 1),
-                        "mask_accuracy": total_mask_correct / total_mask_elements,
-                        "next_accuracy": total_next_correct / total_next_elements
-                    }
-                    with open(language + '.log', 'a') as f:
-                        f.write(json.dumps(post_fix) + '\n')
+                total_next_correct += next_logits.argmax(dim=-1).eq(batch['is_next']).sum().detach().item()
+                total_samples += batch['is_next'].detach().nelement()
 
-            avg_mask_loss = total_mask_loss / len(data[language])
-            avg_next_loss = total_next_loss / len(data[language])
-            avg_adv_loss = total_adv_loss / len(data[language])
-            avg_diff_loss = total_diff_loss / len(data[language])
-            avg_mask_acc = total_mask_correct / total_mask_elements
-            avg_next_acc = total_next_correct / total_next_elements
-            print("EP{0}_{1}_{2}:\n\
-                    mask={3:.4f}\n\
-                    next={4:.4f}\n\
-                    adv={5:.4f}\n\
-                    diff={6:.4f}\n\
-                    mask_acc={7:0.4f}\n\
-                    next_acc={8:0.4f}".format(
-                epoch+1, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_mask_acc, avg_next_acc))
+        avg_loss = total_loss / total_samples
+        avg_mask_loss = total_mask_loss / total_mask_elements
+        avg_next_loss = total_next_loss / total_samples
+        avg_adv_loss = total_adv_loss / total_samples
+        avg_diff_loss = total_diff_loss / total_samples
+        mask_acc = total_mask_correct / total_mask_elements
+        next_acc = total_next_correct / total_samples
 
-        return micro_loss / (len(data) - 1)
+        print("EP{0}_{1}_{2}:\nmask={3:.6f}\tnext={4:.6f}\tadv={5:.6f}\ndiff={6:.6f}\tmask_acc={7:.6f}\tnext_acc={8:.6f}".format(
+                epoch+1, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, mask_acc, next_acc))
+
+        return avg_loss
 
 
     def save(self, epoch, directory_path="output/", savename=None):
@@ -286,7 +273,9 @@ class AdversarialPretrainer:
         if savename is None:
             savename = "epoch.%d.model" % epoch
 
-        torch.save(self.model.cpu(), os.path.join(directory_path, savename))
+        save_path = os.path.join(directory_path, savename)
+        torch.save(self.model.cpu(), save_path)
+        self.model.to(self.device)
 
-        print("EP:%d Model Saved in:" % epoch, directory_path)
-        return directory_path
+        print("EP:%d Model Saved in:" % epoch, save_path)
+        return save_path

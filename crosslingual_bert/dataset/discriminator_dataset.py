@@ -48,7 +48,7 @@ class DiscriminatorDataset(Dataset):
 
     def __getitem__(self, item):
         label, input_ids = self.get_corpus_line(item)
-        assert len(input_ids) > 0
+        #assert len(input_ids) > 0
 
         input_ids = np.hstack((self.tokenizer.vocab['[CLS]'], input_ids, self.tokenizer.vocab['[SEP]']))[:self.max_seq_len]
         if self.max_seq_len - len(input_ids) > 0:
@@ -65,7 +65,7 @@ class DiscriminatorDataset(Dataset):
     def get_corpus_line(self, item):
         if self.on_memory:
             label, sentences = self.lines[item]
-            split = random.randrange(1, len(sentences))
+            split = 0 if len(sentences) == 1 else random.randrange(len(sentences)-1)
             return label, np.hstack(sentences[split:])
         else:
             sentences = None # keep fetching lines until suitable one is found

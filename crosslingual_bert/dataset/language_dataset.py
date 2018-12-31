@@ -67,8 +67,6 @@ class LanguageDataset(Dataset):
     def __getitem__(self, item):
         sample = self.get_corpus_line(item)
         s1, s2, is_next = self.random_sentences(sample)
-        assert len(s1) > 0
-        assert len(s2) > 0 
         s1_random, s1_label = self.random_word(s1)
         s2_random, s2_label = self.random_word(s2)
 
@@ -118,6 +116,7 @@ class LanguageDataset(Dataset):
 
     def random_sentences(self, sample):
         # ensures first section is less than max_seq_len
+        assert len(sample) > 1
         max_split = 0
         token_count = 2 # extra two for sos_token and eos_token
         for sentence in sample:

@@ -107,17 +107,17 @@ class AdversarialPretrainer:
     """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
     def __init__(self, multilingual_model, config, languages, train_data, test_data=None,
-                adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4, with_cuda=True, log_freq=1000):
+                adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4, with_cuda=True):
         """
-        :param bert: BERT model which you want to train
-        :param vocab_size: total word vocab size
-        :param train_dataloader: train dataset data loader
-        :param test_dataloader: test dataset data loader [can be None]
+        :param multilingual_model: a multilingual sequence model which you want to train
+        :param config: config of model containing parameters and total word vocab size
+        :param languages: a dictionary containing language names and their id number
+        :param train_data: train dataset data loader
+        :param test_data: test dataset data loader [can be None]
         :param lr: learning rate of optimizer
-        :param betas: Adam optimizer betas
-        :param weight_decay: Adam optimizer weight decay param
+        :param beta: adversarial loss weight hyperparameter
+        :param gamma: difference loss weight hyperparameter
         :param with_cuda: training with cuda
-        :param log_freq: logging frequency of the batch iteration
         """
 
         # Setup cuda device for BERT training, argument -c, --cuda should be true
@@ -128,6 +128,10 @@ class AdversarialPretrainer:
         self.ltoi = languages
         self.model = AdversarialBertWrapper(multilingual_model, len(languages), config)
         self.model = self.model.to(self.device)
+
+        if with_cuda and torch.cuda.device_count() > 1:
+            print("Using %d GPUS for training" % torch.cuda.device_count())
+            self.model = nn.DataParallel(self.model, device_ids=cuda_devices)
 
         # get data
         self.train_data = train_data
@@ -143,8 +147,6 @@ class AdversarialPretrainer:
         # loss function hyperparameters
         self.beta = beta
         self.gamma = gamma
-
-        self.log_freq = log_freq
 
     def train(self, epoch):
         return self.iteration(epoch, self.train_data)
@@ -169,7 +171,7 @@ class AdversarialPretrainer:
             for repeat in range(self.D_repeat):
                 # for batch in batches
                 D_iter = tqdm.tqdm(enumerate(data["adversary"]),
-                        desc="D_train:{}:{}/{}".format(epoch+1, repeat+1, self.D_repeat),
+                        desc="D_train:{}:{}/{}".format(epoch, repeat+1, self.D_repeat),
                         total=len(data["adversary"]))
 
                 total_loss = 0
@@ -195,7 +197,7 @@ class AdversarialPretrainer:
         micro_loss = 0
         language_iter = IterDict({language: data[language] for language in self.ltoi})
         language_iter = tqdm.tqdm(enumerate(language_iter),
-                desc="{}:{}".format(str_code, epoch+1),
+                desc="{}:{}".format(str_code, epoch),
                 total=len(language_iter))
 
         total_mask_loss = 0.

@@ -1,13 +1,12 @@
+import os
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from itertools import chain
 
 from .optimization import BERTAdam
 from .utils import *
 
 import tqdm
-import pdb
 
 
 class TranslatorTrainer:
@@ -39,36 +38,33 @@ class TranslatorTrainer:
         self.device = torch.device("cuda:0" if cuda_condition else "cpu")
 
         # This BERT model will be saved every epoch
-        self.model = translator_model
+        self.model = translator_model.to(self.device)
         self.languages = languages
         self.target_language = target_language
-
-        for translator in self.model.language_translators:
-            translator.to(self.device)
+        
         # Distributed GPU training if CUDA can detect more than 1 GPU
-        """if with_cuda and torch.cuda.device_count() > 1:
+        if with_cuda and torch.cuda.device_count() > 1:
                 print("Using %d GPUS for BERT" % torch.cuda.device_count())
-                self.model = nn.DataParallel(self.model, device_ids=cuda_devices)"""
+                self.model = nn.DataParallel(self.model, device_ids=cuda_devices)
 
         # Setting the train and test data loader
         self.train_data = train_data
         self.test_data = test_data
 
         # Setting the Adam optimizer with hyper-param
-        self.optim = BERTAdam(self.model.parameters(), lr=lr)
+        self.optims = {language: BERTAdam(self.model.language_parameters(language), lr=lr)
+                for language in self.languages}
 
         # Using Negative Log Likelihood Loss function
         self.criterion = nn.NLLLoss()
 
         self.log_freq = log_freq
 
-        print("Total Parameters:", sum([p.nelement() for p in self.model.parameters()]))
-
     def train(self, epoch):
-        self.iteration(epoch, self.train_data)
+        return self.iteration(epoch, self.train_data)
 
     def test(self, epoch):
-        self.iteration(epoch, self.test_data, train=False)
+        return self.iteration(epoch, self.test_data, train=False)
 
     def iteration(self, epoch, data, train=True):
         """
@@ -84,38 +80,40 @@ class TranslatorTrainer:
         str_code = "train" if train else "test"
 
         # Setting the tqdm progress bar
-        data_iter = tqdm.tqdm(enumerate(iter_dict(data)),
+        data_iter = tqdm.tqdm(enumerate(IterDict(data)),
                               desc="EP_%s:%d" % (str_code, epoch),
                               total=min(len(v) for v in data.values()))
 
-        avg_loss = 0.
+        total_loss = 0.
         total_correct = 0
         total_element = 0
         for i, batches in data_iter:
             for language in self.languages:
-                translator = self.model[language]
-                batch = batches[language]
+                try:
+                    batch = batches[language]
+                except KeyError:
+                    continue
 
                 # send data to cpu or gpu depending on settings
                 batch = {key: value.to(self.device) for key, value in batch.items()}
 
                 # calculate loss for specific language
-                predictions = translator(batch['input_ids'], batch['target_ids'], batch['input_mask'], batch['target_mask'])
+                predictions = self.model(language, batch['input_ids'], batch['target_ids'], batch['input_mask'], batch['target_mask'])
                 loss = self.criterion(predictions, batch['labels'])
 
                 # 3. backward and optimization only in train
                 if train:
-                    self.optim.zero_grad()
+                    self.optims[language].zero_grad()
                     loss.backward()
-                    self.optim.step()
+                    self.optims[language].step()
 
                 # next sentence prediction accuracy
-                correct = predictions.argmax(dim=-1).eq(batch["labels"]).sum().item()
-                avg_loss += loss.item()
+                correct = predictions.argmax(dim=-1).eq(batch["labels"]).sum().detach().item()
+                total_loss += loss.detach().item()
                 total_correct += correct
-                total_element += batch["labels"].nelement()
+                total_element += batch["labels"].detach().nelement()
 
-            post_fix = {
+            """post_fix = {
                 "epoch": epoch,
                 "iter": i,
                 "avg_loss": avg_loss / (i + 1),
@@ -124,12 +122,14 @@ class TranslatorTrainer:
             }
 
             if i % self.log_freq == 0:
-                data_iter.write(str(post_fix))
+                data_iter.write(str(post_fix))"""
 
+        avg_loss = total_loss / total_correct
         print("EP%d_%s, avg_loss=" % (epoch, str_code), avg_loss / len(data_iter), "total_acc=",
-              total_correct * 100.0 / total_element)
+                total_correct / total_element)
+        return avg_loss
 
-    def save(self, epoch, file_path="output/bert_trained.model"):
+    def save(self, epoch, directory_path="output", save_name=None):
         """
         Saving the current BERT model on file_path
 
@@ -137,9 +137,15 @@ class TranslatorTrainer:
         :param file_path: model output path which gonna be file_path+"ep%d" % epoch
         :return: final_output_path
         """
-        raise NotImplementedError
-        output_path = file_path + ".ep%d" % epoch
-        torch.save(self.bert.cpu(), output_path)
-        self.bert.to(self.device)
-        print("EP:%d Model Saved on:" % epoch, output_path)
-        return output_path
+        if not os.path.isdir(directory_path):
+            os.mkdir(directory_path)
+
+        if save_name is None:
+            save_name = "epoch.%d.model" % epoch
+
+        save_path = os.path.join(directory_path, save_name)
+        torch.save(self.model.cpu(), save_path)
+        self.model.to(self.device)
+
+        print("EP:%d Model Saved in:" % epoch, save_path)
+        return save_path

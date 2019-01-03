@@ -3,8 +3,14 @@ class IterDict:
     Continues yielding dictionary 
     """
     def __init__(self, dict_of_iters, drop_last=False):
+        """
+        :dict_of_iters, a dictionary of reusable iterables as values
+        :drop_last, yield batches until an iterator is used up if True
+                else yield batches until all iterators are used up
+        """
         self.dict_of_iters = dict_of_iters
-        if drop_last:
+        self.drop_last = drop_last
+        if self.drop_last:
             self.length = min([len(value) for value in dict_of_iters.values()])
         else:
             self.length = max([len(value) for value in dict_of_iters.values()])
@@ -17,7 +23,7 @@ class IterDict:
                 try:
                     next_dict[key] = next(value)
                 except StopIteration:
-                    if drop_last:
+                    if self.drop_last:
                         break
                     else:
                         continue

@@ -52,3 +52,6 @@ class MultilingualTranslator(nn.Module):
 		target_vectors, _ = self.multilingual_model(self.target_language, target_ids, attention_mask=target_mask)
 		return self.translator_model(language_vectors[-1], target_vectors[-1], input_mask, target_mask)
 
+	def language_parameters(self, language):
+		return chain(self.translator_model.parameters(), self.multilingual_model.language_parameters(language))
+

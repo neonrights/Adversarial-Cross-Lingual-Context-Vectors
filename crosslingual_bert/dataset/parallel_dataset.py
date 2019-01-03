@@ -1,6 +1,7 @@
 import random
 import torch
 import pandas as pd
+import numpy as np
 
 from torch.utils.data import Dataset
 
@@ -9,7 +10,7 @@ class ParallelDataset(Dataset):
 	def __init__(self, parallel_tsv, tokenizer, seq_len, languages=None):
 		self.tokenizer = tokenizer
 		self.seq_len = seq_len
-		self.parallel_df = pd.read_csv(parallel_tsv, sep='\t', usecols=languages)
+		self.parallel_df = pd.read_csv(parallel_tsv, sep='\t', usecols=languages)	
 
 	def _sentence_to_ids(self, sentence):
 		tokens = self.tokenizer.tokenize(sentence)

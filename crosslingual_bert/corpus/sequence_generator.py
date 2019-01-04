@@ -5,8 +5,6 @@ import random
 import tqdm
 import multiprocessing
 
-from readers import OpenSubtitlesReader
-
 
 class SequenceGenerator:
 	"""Generates tokenized sequences of sentences from a specific corpus given
@@ -79,6 +77,8 @@ class SequenceGenerator:
 
 
 if __name__ == '__main__':
+	from readers import OpenSubtitlesReader
+
 	for filename in sys.argv[1:]:
 		filepath, name = os.path.split(filename)
 		out_name = name.split('.')[:2]

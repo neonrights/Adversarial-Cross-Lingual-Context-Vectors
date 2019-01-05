@@ -1,6 +1,11 @@
+import time
+import queue
+import atexit
 import random
 import json
 import itertools
+from multiprocessing import Queue, Process
+
 import numpy as np
 import torch
 import tqdm
@@ -56,10 +61,14 @@ class LanguageDataset(Dataset):
                 self.corpus_lines = len(self.lines)
 
         if not on_memory:
-            self.file = self._get_file_generator()
-            self.random_file = self._get_file_generator()
-            """for _ in range(random.randrange(self.corpus_lines-1 if self.corpus_lines < 1000 else 1000)):
-                next(self.random_file)"""
+            self.file = Queue(maxsize=10000)
+            self.random_file = Queue(maxsize=10000)
+
+            # initialize slave process to safely read from file
+            self.slave = Process(target=LanguageDataset.file_slave,
+                    args=(self.corpus_path, self.file, self.random_file, self.corpus_lines))
+            self.slave.daemon = True
+            self.slave.start()
 
     def __len__(self):
         return self.corpus_lines
@@ -137,12 +146,8 @@ class LanguageDataset(Dataset):
     def get_corpus_line(self, item):
         if self.on_memory:
             return self.lines[item]
-    
-        line = next(self.file)
-        if line is None:
-            self.file = self._get_file_generator()
-            line = next(self.file)
 
+        line = self.file.get()
         sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
                     for sentence in line.split('\t')]
         if not sentences or len(sentences) < 2 or (len(sentences[0]) + 2) >= self.max_seq_len:
@@ -156,17 +161,7 @@ class LanguageDataset(Dataset):
         else:
             sample = None
             while sample is None or len(sample) < 1 or (len(sample[0]) + 2) >= self.max_seq_len:
-                line = next(self.random_file)
-                if line is None:
-                    self.random_file = self._get_file_generator()
-                    line = next(self.random_file)
-                """line = next(self.random_file)
-                if line is None:
-                    self.randomfile = self._get_file_generator()
-                    for _ in range(random.randrange(self.corpus_lines-1 if self.corpus_lines < 1000 else 1000)):
-                        next(self.random_file)
-                    line = next(self.random_file)"""
-
+                line = self.random_file.get()
                 sample = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
                         for sentence in line.split('\t')]
 
@@ -176,10 +171,42 @@ class LanguageDataset(Dataset):
         else:
             return sample
 
-    def _get_file_generator(self):
-        with open(self.corpus_path, 'r') as f:
-            for line in f:
-                yield line
+    @staticmethod
+    def file_slave(file_name, q, random_q, line_count):
+        with open(file_name, 'r') as file, open(file_name, 'r') as random_file:
+            file_iter = iter(file)
+            random_iter = iter(random_file)
+            for _ in range(random.randrange(line_count if line_count < 1000 else 1000)):
+                next(random_iter)
+            
+            while True:
+                if q.empty():
+                    while not q.full():
+                        try:
+                            line = next(file_iter).strip()
+                            if line:
+                                q.put_nowait(line)
+                        except StopIteration:
+                            file.seek(0)
+                            file_iter = iter(file)
+                        except Queue.Full:
+                            break
+
+                if random_q.empty():
+                    while not random_q.full():
+                        try:
+                            line = next(random_iter).strip()
+                            if line:
+                                random_q.put_nowait(line)
+                        except StopIteration:
+                            random_file.seek(0)
+                            random_iter = iter(random_file)
+                            for _ in range(random.randrange(line_count if line_count < 1000 else 1000)):
+                                next(random_iter)
+                        except Queue.Full:
+                            break
+
+                time.sleep(0.1)
 
 
 class LanguageSwapDataset(Dataset):

@@ -11,7 +11,6 @@ from .optimization import BERTAdam
 from .utils import *
 
 import tqdm
-import pdb
 
 
 class NextSentencePrediction(nn.Module):
@@ -148,6 +147,23 @@ class AdversarialPretrainer:
         self.beta = beta
         self.gamma = gamma
 
+    @classmethod
+    def from_checkpoint(cls, save_path, config, languages, train_data, test_data=None,
+                adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4, with_cuda=True):
+        model = torch.load(save_path)
+        trainer = cls(model.multilingual_model, config, languages, train_data, test_data=test_data,
+                adv_repeat=adv_repeat, lr=lr, beta=beta, gamma=gamma, with_cuda=with_cuda)
+
+        if with_cuda and torch.cuda.device_count() > 1:
+            print("Using %d GPUS for training" % torch.cuda.device_count())
+            trainer.model = nn.DataParallel(model, device_ids=cuda_devices)
+        else:
+            trainer.model = model.to(trainer.device)
+        
+        trainer.D_optim = Adam(model.component_parameters("adversary"), lr)
+        trainer.lm_optims = {language: BERTAdam(model.component_parameters(language), lr) for language in languages}
+        return trainer
+
     def train(self, epoch):
         return self.iteration(epoch, self.train_data)
 
@@ -166,6 +182,7 @@ class AdversarialPretrainer:
         :return: None
         """
         str_code = "train" if train else "test"
+        self.model = model.train() if train else model.eval()
 
         if train:
             for repeat in range(self.D_repeat):
@@ -278,6 +295,8 @@ class AdversarialPretrainer:
         save_path = os.path.join(directory_path, save_name)
         torch.save(self.model.cpu(), save_path)
         self.model.to(self.device)
+
+        # save optimizer state and hyperparameters
 
         print("EP:%d Model Saved in:" % epoch, save_path)
         return save_path

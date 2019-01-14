@@ -8,15 +8,50 @@ from .bert_official import BertConfig, BertModel
 from .translator import TranslatorModel
 
 
+class MultilingualConfig(BertConfig):
+	def __init__(self,
+				vocab_size,
+				languages,
+				hidden_size=768,
+				num_hidden_layers=12,
+				num_attention_heads=12,
+				intermediate_size=3072,
+				hidden_act="gelu",
+				hidden_dropout_prob=0.1,
+				attention_probs_dropout_prob=0.1,
+				max_position_embeddings=512,
+				type_vocab_size=16,
+				initializer_range=0.02):
+		self.languages = languages
+		super().__init__(vocab_size,
+				hidden_size,
+				num_hidden_layers,
+				num_attention_heads,
+				intermediate_size,
+				hidden_act,
+				hidden_dropout_prob,
+				attention_probs_dropout_prob,
+				max_position_embeddings,
+				type_vocab_size,
+				initializer_range)
+
+	@classmethod
+	def from_dict(cls, json_object):
+		config = MultilingualBertConfig(vocab_size=None)
+		for (key, value) in six.iteritems(json_object):
+			config.__dict__[key] = value
+		return config
+
+
 class MultilingualBert(nn.Module):
 	"""Cross-lingual context vector model using transformer architecture
 	"""
-	def __init__(self, languages, config: BertConfig):
+	def __init__(self, config: MultilingualConfig):
 		super().__init__()
 		self.shared = BertModel(config)
-		self.private = {language: BertModel(config) for language in languages}
+		self.private = {language: BertModel(config) for language in config.languages}
 		for language, model in self.private.items():
-			super().add_module(language, model)
+			self.add_module(language, model)
 	
 	def forward(self, language, input_ids, token_type_ids=None, attention_mask=None):
 		assert language in self.private
@@ -34,7 +69,7 @@ class MultilingualBert(nn.Module):
 class MultilingualTranslator(nn.Module):
 	"""Universal to target language translation model using transformer architecture
 	"""
-	def __init__(self, model: MultilingualBert, target_language: str, config: BertConfig):
+	def __init__(self, model: MultilingualBert, target_language: str, config: MultilingualConfig):
 		assert target_language in model.private
 		super().__init__()
 		self.multilingual_model = model

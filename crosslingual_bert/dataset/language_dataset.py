@@ -206,7 +206,7 @@ class LanguageDataset(Dataset):
                         except Queue.Full:
                             break
 
-                time.sleep(0.1)
+                time.sleep(0.05)
 
 
 class LanguageSwapDataset(Dataset):

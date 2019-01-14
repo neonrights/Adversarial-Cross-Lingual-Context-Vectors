@@ -14,7 +14,7 @@ class ParallelDataset(Dataset):
 
 	def _sentence_to_ids(self, sentence):
 		tokens = self.tokenizer.tokenize(sentence)
-		tokens = ['<S>'] + tokens + ['<T>']
+		tokens = ['[CLS]'] + tokens + ['[SEP]']
 		ids = self.tokenizer.convert_tokens_to_ids(tokens[:self.seq_len])
 		padding = [0 for _ in range(self.seq_len - len(ids))]
 		return torch.tensor(ids + padding)

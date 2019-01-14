@@ -44,7 +44,7 @@ class DiscriminatorDataset(Dataset):
                 self.corpus_lines = len(self.lines)
 
         if not on_memory:
-            self.file = Queue(maxsize=100000)
+            self.file = Queue(maxsize=10000)
             self.slave = Process(target=DiscriminatorDataset.file_slave,
                     args=(self.corpus_path, self.file))
             self.slave.daemon = True
@@ -102,7 +102,7 @@ class DiscriminatorDataset(Dataset):
                         except Queue.Full:
                             break
 
-                time.sleep(0.1)
+                time.sleep(0.05)
 
 
 class DiscriminatorJSONDataset(Dataset):

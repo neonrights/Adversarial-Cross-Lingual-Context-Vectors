@@ -11,7 +11,6 @@ from .optimization import BERTAdam
 from .utils import *
 
 import tqdm
-import pdb
 
 
 class NextSentencePrediction(nn.Module):
@@ -64,10 +63,10 @@ class AdversarialBertWrapper(nn.Module):
     """
     adds pretraining tasks to entire multilingual model
     """
-    def __init__(self, multilingual_model, language_size, config):
+    def __init__(self, multilingual_model, config):
         super().__init__()
         self.multilingual_model = multilingual_model
-        self.adversary_model = SimpleAdversary(config.hidden_size, language_size)
+        self.adversary_model = SimpleAdversary(config.hidden_size, len(config.languages))
         self.mask_model = MaskedLanguageModel(config.hidden_size*2, config.vocab_size)
         self.next_model = NextSentencePrediction(config.hidden_size*2)
 
@@ -103,50 +102,60 @@ class AdversarialBertWrapper(nn.Module):
             return chain(self.multilingual_model.language_parameters(component), self.mask_model.parameters(), self.next_model.parameters())
 
 
+class AdversarialPretrainerConfig(object):
+    def __init__(self, model_config, language_ids, adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4, with_cuda=True):
+        self.model_config = model_config
+        self.language_ids = language_ids
+        self.adv_repeat = adv_repeat
+        self.lr = lr
+        self.beta = beta
+        self.gamma = gamma
+        self.with_cuda = with_cuda
+
+
 class AdversarialPretrainer:
     """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
-    def __init__(self, multilingual_model, config, languages, train_data, test_data=None,
-                adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4, with_cuda=True):
+    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None):
         """
         :param multilingual_model: a multilingual sequence model which you want to train
-        :param config: config of model containing parameters and total word vocab size
-        :param languages: a dictionary containing language names and their id number
-        :param train_data: train dataset data loader
-        :param test_data: test dataset data loader [can be None]
-        :param lr: learning rate of optimizer
-        :param beta: adversarial loss weight hyperparameter
-        :param gamma: difference loss weight hyperparameter
-        :param with_cuda: training with cuda
+        :param config: config of trainer containing parameters and total word vocab size
+        :param train_data: a dictionary of dataloaders specifying train data
+        :param test_data: a dictionary of dataloaders specifying test data, if none train_data is used instead
         """
 
         # Setup cuda device for BERT training, argument -c, --cuda should be true
-        cuda_condition = torch.cuda.is_available() and with_cuda
+        cuda_condition = torch.cuda.is_available() and config.with_cuda
         self.device = torch.device("cuda:0" if cuda_condition else "cpu")
 
         # initialize public, private, and adversarial discriminator
-        self.ltoi = languages
-        self.model = AdversarialBertWrapper(multilingual_model, len(languages), config)
+        self.ltoi = config.language_ids
+        self.model = AdversarialBertWrapper(multilingual_model, config.model_config)
         self.model = self.model.to(self.device)
 
-        if with_cuda and torch.cuda.device_count() > 1:
+        # parallelize model
+        if config.with_cuda and torch.cuda.device_count() > 1:
             print("Using %d GPUS for training" % torch.cuda.device_count())
             self.model = nn.DataParallel(self.model, device_ids=cuda_devices)
 
-        # get data
+        # assign data
         self.train_data = train_data
         self.test_data = test_data if test_data else train_data
         
         # initialize loss function and optimizers
-        self.D_repeat = adv_repeat
-        self.criterion = nn.NLLLoss()   
+        self.D_repeat = config.adv_repeat
+        self.criterion = nn.NLLLoss()
         self.mask_criterion = nn.NLLLoss(ignore_index=0)
-        self.D_optim = Adam(self.model.component_parameters("adversary"), lr)
-        self.lm_optims = {language: BERTAdam(self.model.component_parameters(language), lr) for language in languages}
+
+        self.D_optim = Adam(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
+        self.lm_optims = {language: BERTAdam(self.model.component_parameters(language), config.lr)
+            for language in config.language_ids} # optimizer for each language model
 
         # loss function hyperparameters
-        self.beta = beta
-        self.gamma = gamma
+        self.beta = config.beta
+        self.gamma = config.gamma
+
+        self._config = config # for checkpointing
 
     def train(self, epoch):
         return self.iteration(epoch, self.train_data)
@@ -158,7 +167,6 @@ class AdversarialPretrainer:
         """
         loop over the data_loader for training or testing
         if on train status, backward operation is activated
-        and also auto save the model every peoch
 
         :param epoch: current epoch index
         :param data_loader: torch.utils.data.DataLoader for iteration
@@ -166,6 +174,7 @@ class AdversarialPretrainer:
         :return: None
         """
         str_code = "train" if train else "test"
+        self.model = self.model.train() if train else self.model.eval()
 
         if train:
             for repeat in range(self.D_repeat):
@@ -191,8 +200,8 @@ class AdversarialPretrainer:
                         loss.backward()
                         self.D_optim.step()
 
-                print("EP{0}_D_{1}: loss={2:.6f} acc={3:.6f}".format(
-                        epoch+1, repeat+1, total_loss / len(D_iter), total_correct / total_elements))
+                print("loss={0:.6f} acc={1:.6f}".format(
+                        total_loss / len(D_iter), total_correct / total_elements))
 
         micro_loss = 0
         language_iter = IterDict({language: data[language] for language in self.ltoi})
@@ -260,24 +269,61 @@ class AdversarialPretrainer:
 
         return avg_loss
 
+    def get_multilingual_model(self):
+        return self.model.multilingual_model
 
-    def save(self, epoch, directory_path="output", save_name=None):
-        """
-        Saving the current BERT model on file_path
+    def save(self, epoch, file_path=None):
+        """saving the current training state in file_path
 
         :param epoch: current epoch number
         :param directory_path: model output path which gonna be file_path+"ep%d" % epoch
-        :return: final_output_path
         """
-        if not os.path.isdir(directory_path):
-            os.mkdir(directory_path)
+        if file_path is None:
+            file_path = "epoch.%d.state" % epoch
 
-        if save_name is None:
-            save_name = "epoch.%d.model" % epoch
+        directory_path, file_name = os.path.split(file_path)
 
-        save_path = os.path.join(directory_path, save_name)
-        torch.save(self.model.cpu(), save_path)
-        self.model.to(self.device)
+        if file_name == '':
+            file_path = os.path.join(directory_path, "epoch.%d.state" % epoch)
 
-        print("EP:%d Model Saved in:" % epoch, save_path)
-        return save_path
+        if not os.path.exists(directory_path):
+            os.makedirs(directory_path)
+
+        # store optimizer state and model
+        current_state = {
+            'epoch': epoch,
+            'model': self.model.state_dict(),
+            'optimizers': {key: value.state_dict() for key, value in self.lm_optims.items()},
+            'adv_optim': self.D_optim.state_dict(),
+            'config': self._config # potentially convert to dict
+        }
+        torch.save(current_state, file_path)
+
+        print("Epoch %d Model and Trainer Saved in:" % epoch, file_path)
+
+
+    @classmethod
+    def load_checkpoint(cls, save_path, arch, train_data, test_data=None):
+        """loading a saved training and model state
+        """
+        save_state = torch.load(save_path)
+        print("Restoring from epoch %d at" % save_state['epoch'], save_path)
+
+        # initialize new trainer
+        model = arch(save_state['config'].model_config)
+        trainer = cls(model, save_state['config'], train_data, test_data)
+        trainer.model.load_state_dict(save_state['model'])
+
+        # replace model, move to appropriate device
+        if save_state['config'].with_cuda and torch.cuda.device_count() > 1:
+            print("Using %d GPUS for training" % torch.cuda.device_count())
+            trainer.model = nn.DataParallel(trainer.model, device_ids=cuda_devices)
+        else:
+            trainer.model = trainer.model.to(trainer.device)
+        
+        # restore optimer states
+        trainer.D_optim.load_state_dict(save_state['adv_optim'])
+        for key in trainer.lm_optims:
+            trainer.lm_optims[key].load_state_dict(save_state['optimizers'][key])
+
+        return trainer, save_state['epoch']

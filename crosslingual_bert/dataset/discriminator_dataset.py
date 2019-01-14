@@ -1,6 +1,9 @@
 import random
+import time
 import json
 import itertools
+from multiprocessing import Queue, Process
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -41,7 +44,11 @@ class DiscriminatorDataset(Dataset):
                 self.corpus_lines = len(self.lines)
 
         if not on_memory:
-            self.file = self._get_file_generator()
+            self.file = Queue(maxsize=10000)
+            self.slave = Process(target=DiscriminatorDataset.file_slave,
+                    args=(self.corpus_path, self.file))
+            self.slave.daemon = True
+            self.slave.start()
 
     def __len__(self):
         return self.corpus_lines
@@ -70,11 +77,7 @@ class DiscriminatorDataset(Dataset):
         else:
             sentences = None # keep fetching lines until suitable one is found
             while sentences is None or len(sentences) < 2:
-                line = next(self.file)
-                if line is None:
-                    self.file = self._get_file_generator()
-                    line = next(self.file)
-
+                line = self.file.get()
                 sentences = line.split('\t')
 
             language = sentences[0]
@@ -83,11 +86,23 @@ class DiscriminatorDataset(Dataset):
             split = 0 if len(sentences) == 1 else random.randrange(len(sentences)-1)
             return self.language_ids[language], np.hstack(sentences[split:])
 
-    def _get_file_generator(self):
-        """safely read file"""
-        with open(self.corpus_path, 'r') as f:
-            for line in f:
-                yield line
+    def file_slave(file_name, q):
+        with open(file_name, 'r') as file:
+            file_iter = iter(file)
+            while True:
+                if q.empty():
+                    while not q.full():
+                        try:
+                            line = next(file_iter).strip()
+                            if line:
+                                q.put_nowait(line)
+                        except StopIteration:
+                            file.seek(0)
+                            file_iter = iter(file)
+                        except Queue.Full:
+                            break
+
+                time.sleep(0.05)
 
 
 class DiscriminatorJSONDataset(Dataset):

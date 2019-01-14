@@ -200,8 +200,8 @@ class AdversarialPretrainer:
                         loss.backward()
                         self.D_optim.step()
 
-                print("EP{0}_D_{1}: loss={2:.6f} acc={3:.6f}".format(
-                        epoch, repeat+1, total_loss / len(D_iter), total_correct / total_elements))
+                print("loss={0:.6f} acc={1:.6f}".format(
+                        total_loss / len(D_iter), total_correct / total_elements))
 
         micro_loss = 0
         language_iter = IterDict({language: data[language] for language in self.ltoi})
@@ -299,7 +299,7 @@ class AdversarialPretrainer:
         }
         torch.save(current_state, file_path)
 
-        print("Epoch %d Model and Trainer Saved in:" % epoch, save_path)
+        print("Epoch %d Model and Trainer Saved in:" % epoch, file_path)
 
 
     @classmethod

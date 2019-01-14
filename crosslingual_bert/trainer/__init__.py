@@ -1,2 +1,2 @@
-from .adversarial_pretrain import AdversarialPretrainer
+from .adversarial_pretrain import AdversarialPretrainer, AdversarialPretrainerConfig
 from .translator_train import TranslatorTrainer

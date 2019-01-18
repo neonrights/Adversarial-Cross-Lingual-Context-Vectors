@@ -1,10 +1,12 @@
 data/
 output/
 
-# Created by .ignore support plugin (hsz.mobi)
-### Python template
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
+# Data and log files
+*.tsv
+*.txt
+*.log

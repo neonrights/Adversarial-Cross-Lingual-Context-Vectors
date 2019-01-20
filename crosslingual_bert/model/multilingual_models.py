@@ -21,7 +21,8 @@ class MultilingualConfig(BertConfig):
 				attention_probs_dropout_prob=0.1,
 				max_position_embeddings=512,
 				type_vocab_size=16,
-				initializer_range=0.02):
+				initializer_range=0.02,
+				checkpoint_layers=False):
 		self.languages = languages
 		super().__init__(vocab_size,
 				hidden_size,
@@ -33,7 +34,8 @@ class MultilingualConfig(BertConfig):
 				attention_probs_dropout_prob,
 				max_position_embeddings,
 				type_vocab_size,
-				initializer_range)
+				initializer_range,
+				checkpoint_layers)
 
 	@classmethod
 	def from_dict(cls, json_object):

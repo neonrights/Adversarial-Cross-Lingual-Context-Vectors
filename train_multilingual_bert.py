@@ -7,10 +7,10 @@ from torch.utils.data import DataLoader
 from crosslingual_bert.dataset import BertTokenizer, LanguageDataset, DiscriminatorDataset
 from crosslingual_bert.model import MultilingualBert, MultilingualConfig
 from crosslingual_bert.trainer import AdversarialPretrainer, AdversarialPretrainerConfig
-import pdb
+
 
 # initialize hyperparameters
-save_path = "pretraining"
+save_path = "small-2"
 seq_len = 180 # XNLI max sequence length with wordpiece tokenization is 167
 ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
 tokenizer = BertTokenizer("./example_data/bert-base-multilingual-cased-vocab.txt")
@@ -31,9 +31,10 @@ trainer_config = AdversarialPretrainerConfig(
 	language_ids=ltoi,
 	adv_repeat=5,
 	lr=1e-4,
-	beta=1e-2,
+	beta=1e-4,
 	gamma=1e-6,
-	with_cuda=True
+	with_cuda=True,
+	max_batch_size=8
 )
 
 # load datasets
@@ -60,10 +61,10 @@ test_en_raw = LanguageDataset('en', "./example_data/test.en.txt",
 adversary_raw = DiscriminatorDataset("./example_data/ar-bg-de-en.txt",
 		tokenizer, ltoi, seq_len, on_memory=False)
 
-train_ar_data = DataLoader(train_ar_raw, batch_size=8, num_workers=2)
-train_bg_data = DataLoader(train_bg_raw, batch_size=8, num_workers=2)
-train_de_data = DataLoader(train_de_raw, batch_size=8, num_workers=2)
-train_en_data = DataLoader(train_en_raw, batch_size=8, num_workers=2)
+train_ar_data = DataLoader(train_ar_raw, batch_size=32, num_workers=4)
+train_bg_data = DataLoader(train_bg_raw, batch_size=32, num_workers=4)
+train_de_data = DataLoader(train_de_raw, batch_size=32, num_workers=4)
+train_en_data = DataLoader(train_en_raw, batch_size=32, num_workers=4)
 
 test_ar_data = DataLoader(test_ar_raw, batch_size=8)
 test_bg_data = DataLoader(test_bg_raw, batch_size=8)
@@ -88,6 +89,7 @@ test_data = {
 }
 
 print({key: len(value) for key, value in train_data.items()})
+print({key: len(value) for key, value in test_data.items()})
 
 # initialize model and trainer
 try:

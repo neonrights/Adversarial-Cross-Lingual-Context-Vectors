@@ -59,7 +59,7 @@ class BertConfig(object):
                 max_position_embeddings=512,
                 type_vocab_size=16,
                 initializer_range=0.02,
-                checkpoint_layers=False):
+                checkpoint_every=None):
         """Constructs BertConfig.
 
 
@@ -97,7 +97,7 @@ class BertConfig(object):
         self.max_position_embeddings = max_position_embeddings
         self.type_vocab_size = type_vocab_size
         self.initializer_range = initializer_range
-        self.checkpoint_layers = checkpoint_layers
+        self.checkpoint_every = None
 
     @classmethod
     def from_dict(cls, json_object):
@@ -292,16 +292,18 @@ class BERTEncoder(nn.Module):
     def __init__(self, config):
         super(BERTEncoder, self).__init__()
         layer = BERTLayer(config)
-        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])    
-        self._checkpoint = config.checkpoint_layers
+        layer_modules = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])    
+        self.layer = [] # checkpoint every n-th layer
+        for i, layer_module in enumerate(layer_modules):
+            if config.checkpoint_every is not None and (i+1) % config.checkpoint_every == 0:
+                layer_module = lambda *args: checkpoint(layer_module, *args)
+            
+            self.layer.append(layer_module)
 
     def forward(self, hidden_states, attention_mask):
         all_encoder_layers = []
-        for layer_module in self.layer:
-            if self._checkpoint:
-                hidden_states = checkpoint(layer_module, hidden_states, attention_mask)
-            else:
-                hidden_states = layer_module(hidden_states, attention_mask)
+        for i, layer_module in enumerate(self.layer):
+            hidden_states = layer_module(hidden_states, attention_mask)
             all_encoder_layers.append(hidden_states)
         return all_encoder_layers
 

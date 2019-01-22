@@ -9,33 +9,9 @@ from .translator import TranslatorModel
 
 
 class MultilingualConfig(BertConfig):
-	def __init__(self,
-				vocab_size,
-				languages,
-				hidden_size=768,
-				num_hidden_layers=12,
-				num_attention_heads=12,
-				intermediate_size=3072,
-				hidden_act="gelu",
-				hidden_dropout_prob=0.1,
-				attention_probs_dropout_prob=0.1,
-				max_position_embeddings=512,
-				type_vocab_size=16,
-				initializer_range=0.02,
-				checkpoint_layers=False):
+	def __init__(self, languages, *args, **kwargs):
 		self.languages = languages
-		super().__init__(vocab_size,
-				hidden_size,
-				num_hidden_layers,
-				num_attention_heads,
-				intermediate_size,
-				hidden_act,
-				hidden_dropout_prob,
-				attention_probs_dropout_prob,
-				max_position_embeddings,
-				type_vocab_size,
-				initializer_range,
-				checkpoint_layers)
+		super().__init__(*args, **kwargs)
 
 	@classmethod
 	def from_dict(cls, json_object):

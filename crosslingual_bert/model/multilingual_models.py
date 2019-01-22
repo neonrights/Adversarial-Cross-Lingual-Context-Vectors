@@ -15,7 +15,7 @@ class MultilingualConfig(BertConfig):
 
 	@classmethod
 	def from_dict(cls, json_object):
-		config = MultilingualBertConfig(vocab_size=None)
+		config = MultilingualBertConfig(languages=None, vocab_size=None)
 		for (key, value) in six.iteritems(json_object):
 			config.__dict__[key] = value
 		return config

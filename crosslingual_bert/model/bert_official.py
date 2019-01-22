@@ -27,7 +27,7 @@ import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from six import string_types
 from torch.utils.checkpoint import checkpoint
-
+import pdb
 
 def gelu(x):
     """Implementation of the gelu activation function.
@@ -84,7 +84,7 @@ class BertConfig(object):
                 `BertModel`.
             initializer_range: The sttdev of the truncated_normal_initializer for
                 initializing all weight matrices.
-            checkpoint_layers: whether to checkpoint each layer of the model
+            checkpoint_every: checkpoint every n-th layer for large models 
         """
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
@@ -97,7 +97,7 @@ class BertConfig(object):
         self.max_position_embeddings = max_position_embeddings
         self.type_vocab_size = type_vocab_size
         self.initializer_range = initializer_range
-        self.checkpoint_every = None
+        self.checkpoint_every = checkpoint_every
 
     @classmethod
     def from_dict(cls, json_object):
@@ -292,18 +292,16 @@ class BERTEncoder(nn.Module):
     def __init__(self, config):
         super(BERTEncoder, self).__init__()
         layer = BERTLayer(config)
-        layer_modules = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])    
-        self.layer = [] # checkpoint every n-th layer
-        for i, layer_module in enumerate(layer_modules):
-            if config.checkpoint_every is not None and (i+1) % config.checkpoint_every == 0:
-                layer_module = lambda *args: checkpoint(layer_module, *args)
-            
-            self.layer.append(layer_module)
+        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)]) # checkpoint every n-th layer
+        self.checkpoint_every = config.checkpoint_every
 
     def forward(self, hidden_states, attention_mask):
         all_encoder_layers = []
         for i, layer_module in enumerate(self.layer):
-            hidden_states = layer_module(hidden_states, attention_mask)
+            if self.checkpoint_every is not None and (i+1) % self.checkpoint_every == 0:
+                hidden_states = checkpoint(layer_module, hidden_states, attention_mask)
+            else:
+                hidden_states = layer_module(hidden_states, attention_mask)
             all_encoder_layers.append(hidden_states)
         return all_encoder_layers
 

@@ -10,31 +10,29 @@ from crosslingual_bert.trainer import AdversarialPretrainer, AdversarialPretrain
 
 
 # initialize hyperparameters
-save_path = "small-2"
-seq_len = 180 # XNLI max sequence length with wordpiece tokenization is 167
+save_path = "large-1"
+seq_len = 200 # XNLI max sequence length with wordpiece tokenization is 167
 ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
 tokenizer = BertTokenizer("./example_data/bert-base-multilingual-cased-vocab.txt")
 
 model_config = MultilingualConfig(
-	len(tokenizer.vocab),
 	languages=ltoi,
-	hidden_size=192,
-	num_hidden_layers=3,
-	num_attention_heads=12,
-	intermediate_size=394,
-	hidden_act='gelu',
-	max_position_embeddings=256
+	vocab_size=len(tokenizer.vocab),
+	hidden_size=384,
+	intermediate_size=1536,
+	max_position_embeddings=256,
+	checkpoint_every=2
 )
 
 trainer_config = AdversarialPretrainerConfig(
 	model_config=model_config,
 	language_ids=ltoi,
-	adv_repeat=5,
+	adv_repeat=0,
 	lr=1e-4,
 	beta=1e-4,
 	gamma=1e-6,
 	with_cuda=True,
-	max_batch_size=8
+	max_batch_size=2
 )
 
 # load datasets
@@ -50,13 +48,13 @@ train_en_raw = LanguageDataset('en', "./example_data/train.en.txt",
 		tokenizer, seq_len, on_memory=False)
 
 test_ar_raw = LanguageDataset('ar', "./example_data/test.ar.txt",
-		tokenizer, seq_len)
+		tokenizer, seq_len, on_memory=False)
 test_bg_raw = LanguageDataset('bg', "./example_data/test.bg.txt",
-		tokenizer, seq_len)
+		tokenizer, seq_len, on_memory=False)
 test_de_raw = LanguageDataset('de', "./example_data/test.de.txt",
-		tokenizer, seq_len)
+		tokenizer, seq_len, on_memory=False)
 test_en_raw = LanguageDataset('en', "./example_data/test.en.txt",
-		tokenizer, seq_len)
+		tokenizer, seq_len, on_memory=False)
 
 adversary_raw = DiscriminatorDataset("./example_data/ar-bg-de-en.txt",
 		tokenizer, ltoi, seq_len, on_memory=False)

@@ -244,8 +244,12 @@ class AdversarialPretrainer:
                         total_loss / len(D_iter), total_correct / total_elements))
 
         micro_loss = 0
-        language_iter = IterDict({language: data[language] for language in self.ltoi})
-        language_iter = tqdm.tqdm(enumerate(language_iter),
+        if train:
+            language_iter = SmoothedRandomSampler({language: data[language] for language in self.ltoi})
+        else:
+            language_iter = SequentialSampler({language: data[language] for language in self.ltoi})
+
+        language_iter = tqdm.tqdm(language_iter,
                 desc="{}:{}".format(str_code, epoch),
                 total=len(language_iter))
 
@@ -259,56 +263,50 @@ class AdversarialPretrainer:
         total_mask_elements = 0
         total_next_correct = 0
         total_samples = 0
-        for i, batches in language_iter:
-            for language, language_label in self.ltoi.items():
-                try:
-                    batch = batches[language]
-                except KeyError:
-                    continue
+        for language, batch in language_iter:
+            # accumulate gradients if necessary
+            if self.max_batch_size:
+                splitbatch = {key: value.split(self.max_batch_size, 0) for key, value in batch.items()}
+                subbatches = []
+                for j in range(len(splitbatch['input_ids'])):
+                    subbatches.append({key: value[j] for key, value in splitbatch.items()})
+            else:
+                subbatches = [batch]
 
-                # accumulate gradients if necessary
-                if self.max_batch_size:
-                    splitbatch = {key: value.split(self.max_batch_size, 0) for key, value in batch.items()}
-                    subbatches = []
-                    for j in range(len(splitbatch['input_ids'])):
-                        subbatches.append({key: value[j] for key, value in splitbatch.items()})
-                else:
-                    subbatches = [batch]
+            if train:
+                self.lm_optims[language].zero_grad()
 
+            for batch in subbatches:
+                batch = {key: value.to(self.device) for key, value in batch.items()}
+                mask_logits, next_logits, language_logits, diff_loss =\
+                        self.model(language, batch['input_ids'], token_type_ids=batch['segment_label'], attention_mask=batch['mask'])
+
+                mask_loss = self.mask_criterion(mask_logits.transpose(1,2), batch['token_labels']).to(self.device)
+                next_loss = self.criterion(next_logits, batch['is_next']).to(self.device)
+                language_labels = self.ltoi[language] + torch.zeros(language_logits.size(0), dtype=torch.long)
+                adv_loss = -self.criterion(language_logits, language_labels.to(self.device)) # TODO correct loss
+
+                train_loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss
                 if train:
-                    self.lm_optims[language].zero_grad()
+                    train_loss.backward()
 
-                for batch in subbatches:
-                    batch = {key: value.to(self.device) for key, value in batch.items()}
-                    mask_logits, next_logits, language_logits, diff_loss =\
-                            self.model(language, batch['input_ids'], token_type_ids=batch['segment_label'], attention_mask=batch['mask'])
+                total_loss += train_loss.detach().item()
+                
+                total_mask_loss += mask_loss.detach().item()
+                total_next_loss += next_loss.detach().item()
+                total_adv_loss += adv_loss.detach().item()
+                total_diff_loss += diff_loss.detach().item()
 
-                    mask_loss = self.mask_criterion(mask_logits.transpose(1,2), batch['token_labels']).to(self.device)
-                    next_loss = self.criterion(next_logits, batch['is_next']).to(self.device)
-                    language_labels = language_label + torch.zeros(language_logits.size(0), dtype=torch.long)
-                    adv_loss = -self.criterion(language_logits, language_labels.to(self.device)) # TODO correct loss
+                mask_correct = mask_logits.argmax(-1).eq(batch['token_labels']).sum().detach().item()
+                mask_elements = (batch['token_labels'] > 0).sum().detach().item()
+                total_mask_correct += (mask_correct & mask_elements)
+                total_mask_elements += mask_elements
 
-                    train_loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss
-                    if train:
-                        train_loss.backward()
+                total_next_correct += next_logits.argmax(dim=-1).eq(batch['is_next']).sum().detach().item()
+                total_samples += batch['is_next'].detach().nelement()
 
-                    total_loss += train_loss.detach().item()
-                    
-                    total_mask_loss += mask_loss.detach().item()
-                    total_next_loss += next_loss.detach().item()
-                    total_adv_loss += adv_loss.detach().item()
-                    total_diff_loss += diff_loss.detach().item()
-
-                    mask_correct = mask_logits.argmax(-1).eq(batch['token_labels']).sum().detach().item()
-                    mask_elements = (batch['token_labels'] > 0).sum().detach().item()
-                    total_mask_correct += (mask_correct & mask_elements)
-                    total_mask_elements += mask_elements
-
-                    total_next_correct += next_logits.argmax(dim=-1).eq(batch['is_next']).sum().detach().item()
-                    total_samples += batch['is_next'].detach().nelement()
-
-                if train:
-                    self.lm_optims[language].step()
+            if train:
+                self.lm_optims[language].step()
 
         avg_loss = total_loss / total_samples
         avg_mask_loss = total_mask_loss / total_mask_elements

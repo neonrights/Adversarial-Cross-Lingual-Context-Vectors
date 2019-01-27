@@ -1,5 +1,6 @@
 import os
 import json
+import six
 from itertools import chain
 
 import torch
@@ -111,8 +112,10 @@ class AdversarialPretrainerConfig(object):
                 beta=1e-2,
                 gamma=1e-4,
                 with_cuda=True,
-                max_batch_size=8):
-        self.model_config = model_config
+                cuda_devices=None,
+                max_batch_size=None):
+        
+        self.__dict__.update(model_config.__dict__)
         self.language_ids = language_ids
         self.adv_repeat = adv_repeat
         self.lr = lr
@@ -120,6 +123,30 @@ class AdversarialPretrainerConfig(object):
         self.gamma = gamma
         self.with_cuda = with_cuda
         self.max_batch_size = max_batch_size
+
+    @classmethod
+    def from_dict(cls, json_object):
+        """Constructs a `BertConfig` from a Python dictionary of parameters."""
+        config = AdversarialPretrainerConfig(model_config=None, language_ids=None)
+        for (key, value) in six.iteritems(json_object):
+            config.__dict__[key] = value
+        return config
+
+    @classmethod
+    def from_json_file(cls, json_file):
+        """Constructs a `BertConfig` from a json file of parameters."""
+        with open(json_file, "r") as reader:
+            text = reader.read()
+        return cls.from_dict(json.loads(text))
+
+    def to_dict(self):
+        """Serializes this instance to a Python dictionary."""
+        output = copy.deepcopy(self.__dict__)
+        return output
+
+    def to_json_string(self):
+        """Serializes this instance to a JSON string."""
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
 class AdversarialPretrainer:
@@ -139,13 +166,7 @@ class AdversarialPretrainer:
 
         # initialize public, private, and adversarial discriminator
         self.ltoi = config.language_ids
-        self.model = AdversarialBertWrapper(multilingual_model, config.model_config)
-        self.model = self.model.to(self.device)
-
-        # parallelize model
-        if config.with_cuda and torch.cuda.device_count() > 1:
-            print("Using %d GPUS for training" % torch.cuda.device_count())
-            self.model = nn.DataParallel(self.model, device_ids=cuda_devices)
+        self.model = AdversarialBertWrapper(multilingual_model, config)
 
         # assign data
         self.train_data = train_data
@@ -166,6 +187,13 @@ class AdversarialPretrainer:
 
         # max batch size that can fit on GPU at once for accumulation
         self.max_batch_size = config.max_batch_size
+
+        # parallelize model, move to device if necessary
+        if config.with_cuda and torch.cuda.device_count() > 1:
+            print("Using %d GPUS for training" % torch.cuda.device_count())
+            self.model = nn.DataParallel(self.model, devices_ids=list(range(torch.cuda.device_count())))
+        else:
+            self.model.to(self.device)
 
         self._config = config # for checkpointing
 
@@ -202,7 +230,7 @@ class AdversarialPretrainer:
                     batch = {key: value.to(self.device) for key, value in batch.items()}
                     logits = self.model.forward("adversary", batch["input_ids"], attention_mask=batch['mask'])
                     loss = self.criterion(logits, batch['language_label']).to(self.device)
-                    
+
                     total_loss += loss.detach().item()
                     total_correct += logits.argmax(-1).eq(batch['language_label']).sum().detach().item()
                     total_elements += batch['language_label'].detach().nelement()
@@ -238,13 +266,20 @@ class AdversarialPretrainer:
                 except KeyError:
                     continue
 
-                splitbatch = {key: value.split(self.max_batch_size, 0) for key, value in batch.items()}
-                
+                # accumulate gradients if necessary
+                if self.max_batch_size:
+                    splitbatch = {key: value.split(self.max_batch_size, 0) for key, value in batch.items()}
+                    subbatches = []
+                    for j in range(len(splitbatch['input_ids'])):
+                        subbatches.append({key: value[j] for key, value in splitbatch.items()})
+                else:
+                    subbatches = [batch]
+
                 if train:
                     self.lm_optims[language].zero_grad()
 
-                for j in range(len(splitbatch['input_ids'])):
-                    batch = {key: value[j].to(self.device) for key, value in splitbatch.items()}
+                for batch in subbatches:
+                    batch = {key: value.to(self.device) for key, value in batch.items()}
                     mask_logits, next_logits, language_logits, diff_loss =\
                             self.model(language, batch['input_ids'], token_type_ids=batch['segment_label'], attention_mask=batch['mask'])
 
@@ -314,7 +349,7 @@ class AdversarialPretrainer:
             'model': self.model.state_dict(),
             'optimizers': {key: value.state_dict() for key, value in self.lm_optims.items()},
             'adv_optim': self.D_optim.state_dict(),
-            'config': self._config # potentially convert to dict
+            'config': self._config
         }
         torch.save(current_state, file_path)
 

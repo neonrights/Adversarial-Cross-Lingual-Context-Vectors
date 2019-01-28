@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .bert_official import BertConfig, BertModel
+from .bert_official import BertConfig, BERTEmbeddings, NoEmbedBert
 from .translator import TranslatorModel
 
 
@@ -26,22 +26,33 @@ class MultilingualBert(nn.Module):
 	"""
 	def __init__(self, config: MultilingualConfig):
 		super().__init__()
-		self.shared = BertModel(config)
-		self.private = {language: BertModel(config) for language in config.languages}
+		self.shared = NoEmbedBert(config)
+		self.embeddings = BERTEmbeddings(config)
+		self.private = {language: NoEmbedBert(config) for language in config.languages}
 		for language, model in self.private.items():
 			self.add_module(language, model)
-	
+
 	def forward(self, language, input_ids, token_type_ids=None, attention_mask=None):
 		assert language in self.private
-		shared_vectors, shared_pooled = self.shared(input_ids, token_type_ids, attention_mask)
-		private_vectors, private_pooled = self.private[language](input_ids, token_type_ids, attention_mask)
+		if token_type_ids is None:
+			token_type_ids = torch.zeros_like(input_ids)
+
+		# embeddings shared across all languages
+		embeddings = self.embeddings(input_ids, token_type_ids)
+
+		shared_vectors, shared_pooled = self.shared(embeddings, attention_mask)
+		private_vectors, private_pooled = self.private[language](embeddings, attention_mask)
 		hidden_vectors = [torch.cat((sv, pv), -1) for sv, pv in zip(shared_vectors, private_vectors)]
 		pooled_output = torch.cat((shared_pooled, private_pooled), -1)
 		return hidden_vectors, pooled_output
 
 	def language_parameters(self, language):
+		"""Returns all parameters for a specific language model
+		"""
 		assert language in self.private
-		return chain(self.shared.parameters(), self.private[language].parameters())
+		return chain(self.shared.parameters(),
+			self.private[language].parameters(),
+			self.embeddings.parameters())
 
 
 class MultilingualTranslator(nn.Module):

@@ -28,9 +28,8 @@ class MultilingualBert(nn.Module):
 		super().__init__()
 		self.shared = NoEmbedBert(config)
 		self.embeddings = BERTEmbeddings(config)
-		self.private = {language: NoEmbedBert(config) for language in config.languages}
-		for language, model in self.private.items():
-			self.add_module(language, model)
+		self.private = nn.ModuleDict({language: NoEmbedBert(config)
+				for language in config.languages})
 
 	def forward(self, language, input_ids, token_type_ids=None, attention_mask=None):
 		assert language in self.private

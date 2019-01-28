@@ -27,7 +27,7 @@ import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from six import string_types
 from torch.utils.checkpoint import checkpoint
-
+import pdb
 
 def gelu(x):
     """Implementation of the gelu activation function.
@@ -59,7 +59,7 @@ class BertConfig(object):
                 max_position_embeddings=512,
                 type_vocab_size=16,
                 initializer_range=0.02,
-                checkpoint_layers=False):
+                checkpoint_every=None):
         """Constructs BertConfig.
 
 
@@ -84,7 +84,7 @@ class BertConfig(object):
                 `BertModel`.
             initializer_range: The sttdev of the truncated_normal_initializer for
                 initializing all weight matrices.
-            checkpoint_layers: whether to checkpoint each layer of the model
+            checkpoint_every: checkpoint every n-th layer for large models 
         """
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
@@ -97,7 +97,7 @@ class BertConfig(object):
         self.max_position_embeddings = max_position_embeddings
         self.type_vocab_size = type_vocab_size
         self.initializer_range = initializer_range
-        self.checkpoint_layers = checkpoint_layers
+        self.checkpoint_every = checkpoint_every
 
     @classmethod
     def from_dict(cls, json_object):
@@ -292,13 +292,13 @@ class BERTEncoder(nn.Module):
     def __init__(self, config):
         super(BERTEncoder, self).__init__()
         layer = BERTLayer(config)
-        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])    
-        self._checkpoint = config.checkpoint_layers
+        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)]) # checkpoint every n-th layer
+        self.checkpoint_every = config.checkpoint_every
 
     def forward(self, hidden_states, attention_mask):
         all_encoder_layers = []
-        for layer_module in self.layer:
-            if self._checkpoint:
+        for i, layer_module in enumerate(self.layer):
+            if self.checkpoint_every is not None and (i+1) % self.checkpoint_every == 0:
                 hidden_states = checkpoint(layer_module, hidden_states, attention_mask)
             else:
                 hidden_states = layer_module(hidden_states, attention_mask)

@@ -1,5 +1,6 @@
 import os
 import json
+import six
 from itertools import chain
 
 import torch
@@ -73,7 +74,8 @@ class AdversarialBertWrapper(nn.Module):
     def forward(self, component, input_ids, token_type_ids=None, attention_mask=None):
         if component == 'adversary':
             # return logits for adversarial language prediction
-            _, pooled_vectors = self.multilingual_model.shared(input_ids, token_type_ids, attention_mask)
+            embeddings = self.multilingual_model.embeddings(input_ids, token_type_ids)
+            _, pooled_vectors = self.multilingual_model.shared(embeddings, attention_mask)
             return self.adversary_model(pooled_vectors)
         else:
             hidden_vectors, pooled_vectors = self.multilingual_model(component, input_ids, token_type_ids, attention_mask)
@@ -86,14 +88,12 @@ class AdversarialBertWrapper(nn.Module):
             hidden_dim = hidden_vectors[-1].size(-1)
             public_vectors, private_vectors = torch.split(hidden_vectors[-1], hidden_dim // 2, -1)
             diff = torch.bmm(private_vectors, torch.transpose(public_vectors, 1, 2))
-            diff_loss = torch.sum(diff ** 2)
-            diff_loss /= pooled_vectors.size(0)
 
             # adversarial prediction
             public_pooled, _ = torch.split(pooled_vectors, hidden_dim // 2, -1)
             language_logits = self.adversary_model(public_pooled)
 
-            return token_logits, next_logits, language_logits, diff_loss
+            return token_logits, next_logits, language_logits, diff
 
     def component_parameters(self, component):
         if component == 'adversary':
@@ -103,14 +103,48 @@ class AdversarialBertWrapper(nn.Module):
 
 
 class AdversarialPretrainerConfig(object):
-    def __init__(self, model_config, language_ids, adv_repeat=5, lr=1e-4, beta=1e-2, gamma=1e-4, with_cuda=True):
-        self.model_config = model_config
+    def __init__(self,
+                model_config,
+                language_ids,
+                adv_repeat=5,
+                lr=1e-4,
+                beta=1e-2,
+                gamma=1e-4,
+                cuda_devices=None,
+                max_batch_size=None):
+        
+        self.__dict__.update(model_config.__dict__) # add model configuration
         self.language_ids = language_ids
         self.adv_repeat = adv_repeat
         self.lr = lr
         self.beta = beta
         self.gamma = gamma
-        self.with_cuda = with_cuda
+        self.cuda_devices = cuda_devices
+        self.max_batch_size = max_batch_size
+
+    @classmethod
+    def from_dict(cls, json_object):
+        """Constructs a `BertConfig` from a Python dictionary of parameters."""
+        config = AdversarialPretrainerConfig(model_config=None, language_ids=None)
+        for (key, value) in six.iteritems(json_object):
+            config.__dict__[key] = value
+        return config
+
+    @classmethod
+    def from_json_file(cls, json_file):
+        """Constructs a `BertConfig` from a json file of parameters."""
+        with open(json_file, "r") as reader:
+            text = reader.read()
+        return cls.from_dict(json.loads(text))
+
+    def to_dict(self):
+        """Serializes this instance to a Python dictionary."""
+        output = copy.deepcopy(self.__dict__)
+        return output
+
+    def to_json_string(self):
+        """Serializes this instance to a JSON string."""
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
 class AdversarialPretrainer:
@@ -125,18 +159,12 @@ class AdversarialPretrainer:
         """
 
         # Setup cuda device for BERT training, argument -c, --cuda should be true
-        cuda_condition = torch.cuda.is_available() and config.with_cuda
+        cuda_condition = torch.cuda.is_available() and config.cuda_devices is not None
         self.device = torch.device("cuda:0" if cuda_condition else "cpu")
 
         # initialize public, private, and adversarial discriminator
         self.ltoi = config.language_ids
-        self.model = AdversarialBertWrapper(multilingual_model, config.model_config)
-        self.model = self.model.to(self.device)
-
-        # parallelize model
-        if config.with_cuda and torch.cuda.device_count() > 1:
-            print("Using %d GPUS for training" % torch.cuda.device_count())
-            self.model = nn.DataParallel(self.model, device_ids=cuda_devices)
+        self.model = AdversarialBertWrapper(multilingual_model, config)
 
         # assign data
         self.train_data = train_data
@@ -154,6 +182,15 @@ class AdversarialPretrainer:
         # loss function hyperparameters
         self.beta = config.beta
         self.gamma = config.gamma
+
+        # max batch size that can fit on GPU at once for accumulation
+        self.max_batch_size = config.max_batch_size
+
+        # move to device, parallelize across GPUs
+        self.model.to(self.device)
+        if config.cuda_devices is not None and torch.cuda.device_count() >= max(config.cuda_devices):
+            print("Using %d GPUS for training" % len(config.cuda_devices))
+            self.model = nn.DataParallel(self.model, device_ids=config.cuda_devices).to(self.device)
 
         self._config = config # for checkpointing
 
@@ -190,7 +227,7 @@ class AdversarialPretrainer:
                     batch = {key: value.to(self.device) for key, value in batch.items()}
                     logits = self.model.forward("adversary", batch["input_ids"], attention_mask=batch['mask'])
                     loss = self.criterion(logits, batch['language_label']).to(self.device)
-                    
+
                     total_loss += loss.detach().item()
                     total_correct += logits.argmax(-1).eq(batch['language_label']).sum().detach().item()
                     total_elements += batch['language_label'].detach().nelement()
@@ -204,8 +241,12 @@ class AdversarialPretrainer:
                         total_loss / len(D_iter), total_correct / total_elements))
 
         micro_loss = 0
-        language_iter = IterDict({language: data[language] for language in self.ltoi})
-        language_iter = tqdm.tqdm(enumerate(language_iter),
+        if train:
+            language_iter = SmoothedRandomSampler({language: data[language] for language in self.ltoi})
+        else:
+            language_iter = SequentialSampler({language: data[language] for language in self.ltoi})
+
+        language_iter = tqdm.tqdm(language_iter,
                 desc="{}:{}".format(str_code, epoch),
                 total=len(language_iter))
 
@@ -219,27 +260,35 @@ class AdversarialPretrainer:
         total_mask_elements = 0
         total_next_correct = 0
         total_samples = 0
-        for i, batches in language_iter:
-            for language, language_label in self.ltoi.items():
-                try:
-                    batch = batches[language]
-                except KeyError:
-                    continue
+        for language, batch in language_iter:
+            # accumulate gradients if necessary
+            if self.max_batch_size:
+                splitbatch = {key: value.split(self.max_batch_size, 0)
+                        for key, value in batch.items()}
+                subbatches = []
+                for j in range(len(splitbatch['input_ids'])):
+                    subbatches.append({key: value[j] for key, value in splitbatch.items()})
+            else:
+                subbatches = [batch]
 
+            if train:
+                self.lm_optims[language].zero_grad()
+
+            # compute losses for each subbatch
+            for batch in subbatches:
                 batch = {key: value.to(self.device) for key, value in batch.items()}
-                mask_logits, next_logits, language_logits, diff_loss =\
+                mask_logits, next_logits, language_logits, diff =\
                         self.model(language, batch['input_ids'], token_type_ids=batch['segment_label'], attention_mask=batch['mask'])
 
                 mask_loss = self.mask_criterion(mask_logits.transpose(1,2), batch['token_labels']).to(self.device)
                 next_loss = self.criterion(next_logits, batch['is_next']).to(self.device)
-                language_labels = language_label + torch.zeros(language_logits.size(0), dtype=torch.long)
+                language_labels = self.ltoi[language] + torch.zeros(language_logits.size(0), dtype=torch.long)
                 adv_loss = -self.criterion(language_logits, language_labels.to(self.device)) # TODO correct loss
+                diff_loss = torch.sum(diff ** 2) / batch['input_ids'].size(0)
 
                 train_loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss
                 if train:
-                    self.lm_optims[language].zero_grad()
                     train_loss.backward()
-                    self.lm_optims[language].step()
 
                 total_loss += train_loss.detach().item()
                 
@@ -255,6 +304,9 @@ class AdversarialPretrainer:
 
                 total_next_correct += next_logits.argmax(dim=-1).eq(batch['is_next']).sum().detach().item()
                 total_samples += batch['is_next'].detach().nelement()
+
+            if train:
+                self.lm_optims[language].step()
 
         avg_loss = total_loss / total_samples
         avg_mask_loss = total_mask_loss / total_mask_elements
@@ -295,7 +347,7 @@ class AdversarialPretrainer:
             'model': self.model.state_dict(),
             'optimizers': {key: value.state_dict() for key, value in self.lm_optims.items()},
             'adv_optim': self.D_optim.state_dict(),
-            'config': self._config # potentially convert to dict
+            'config': self._config
         }
         torch.save(current_state, file_path)
 
@@ -310,16 +362,9 @@ class AdversarialPretrainer:
         print("Restoring from epoch %d at" % save_state['epoch'], save_path)
 
         # initialize new trainer
-        model = arch(save_state['config'].model_config)
+        model = arch(save_state['config'])
         trainer = cls(model, save_state['config'], train_data, test_data)
         trainer.model.load_state_dict(save_state['model'])
-
-        # replace model, move to appropriate device
-        if save_state['config'].with_cuda and torch.cuda.device_count() > 1:
-            print("Using %d GPUS for training" % torch.cuda.device_count())
-            trainer.model = nn.DataParallel(trainer.model, device_ids=cuda_devices)
-        else:
-            trainer.model = trainer.model.to(trainer.device)
         
         # restore optimer states
         trainer.D_optim.load_state_dict(save_state['adv_optim'])

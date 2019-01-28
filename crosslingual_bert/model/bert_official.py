@@ -26,6 +26,8 @@ import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from six import string_types
+from torch.utils.checkpoint import checkpoint
+
 
 def gelu(x):
     """Implementation of the gelu activation function.
@@ -56,8 +58,10 @@ class BertConfig(object):
                 attention_probs_dropout_prob=0.1,
                 max_position_embeddings=512,
                 type_vocab_size=16,
-                initializer_range=0.02):
+                initializer_range=0.02,
+                checkpoint_layers=False):
         """Constructs BertConfig.
+
 
         Args:
             vocab_size: Vocabulary size of `inputs_ids` in `BertModel`.
@@ -80,6 +84,7 @@ class BertConfig(object):
                 `BertModel`.
             initializer_range: The sttdev of the truncated_normal_initializer for
                 initializing all weight matrices.
+            checkpoint_layers: whether to checkpoint each layer of the model
         """
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
@@ -92,6 +97,7 @@ class BertConfig(object):
         self.max_position_embeddings = max_position_embeddings
         self.type_vocab_size = type_vocab_size
         self.initializer_range = initializer_range
+        self.checkpoint_layers = checkpoint_layers
 
     @classmethod
     def from_dict(cls, json_object):
@@ -287,11 +293,15 @@ class BERTEncoder(nn.Module):
         super(BERTEncoder, self).__init__()
         layer = BERTLayer(config)
         self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])    
+        self._checkpoint = config.checkpoint_layers
 
     def forward(self, hidden_states, attention_mask):
         all_encoder_layers = []
         for layer_module in self.layer:
-            hidden_states = layer_module(hidden_states, attention_mask)
+            if self._checkpoint:
+                hidden_states = checkpoint(layer_module, hidden_states, attention_mask)
+            else:
+                hidden_states = layer_module(hidden_states, attention_mask)
             all_encoder_layers.append(hidden_states)
         return all_encoder_layers
 

@@ -74,7 +74,8 @@ class AdversarialBertWrapper(nn.Module):
     def forward(self, component, input_ids, token_type_ids=None, attention_mask=None):
         if component == 'adversary':
             # return logits for adversarial language prediction
-            _, pooled_vectors = self.multilingual_model.shared(input_ids, token_type_ids, attention_mask)
+            embeddings = self.multilingual_model.embeddings(input_ids, token_type_ids)
+            _, pooled_vectors = self.multilingual_model.shared(embeddings, attention_mask)
             return self.adversary_model(pooled_vectors)
         else:
             hidden_vectors, pooled_vectors = self.multilingual_model(component, input_ids, token_type_ids, attention_mask)
@@ -87,14 +88,12 @@ class AdversarialBertWrapper(nn.Module):
             hidden_dim = hidden_vectors[-1].size(-1)
             public_vectors, private_vectors = torch.split(hidden_vectors[-1], hidden_dim // 2, -1)
             diff = torch.bmm(private_vectors, torch.transpose(public_vectors, 1, 2))
-            diff_loss = torch.sum(diff ** 2)
-            diff_loss /= pooled_vectors.size(0)
 
             # adversarial prediction
             public_pooled, _ = torch.split(pooled_vectors, hidden_dim // 2, -1)
             language_logits = self.adversary_model(public_pooled)
 
-            return token_logits, next_logits, language_logits, diff_loss
+            return token_logits, next_logits, language_logits, diff
 
     def component_parameters(self, component):
         if component == 'adversary':
@@ -111,17 +110,16 @@ class AdversarialPretrainerConfig(object):
                 lr=1e-4,
                 beta=1e-2,
                 gamma=1e-4,
-                with_cuda=True,
                 cuda_devices=None,
                 max_batch_size=None):
         
-        self.__dict__.update(model_config.__dict__)
+        self.__dict__.update(model_config.__dict__) # add model configuration
         self.language_ids = language_ids
         self.adv_repeat = adv_repeat
         self.lr = lr
         self.beta = beta
         self.gamma = gamma
-        self.with_cuda = with_cuda
+        self.cuda_devices = cuda_devices
         self.max_batch_size = max_batch_size
 
     @classmethod
@@ -161,7 +159,7 @@ class AdversarialPretrainer:
         """
 
         # Setup cuda device for BERT training, argument -c, --cuda should be true
-        cuda_condition = torch.cuda.is_available() and config.with_cuda
+        cuda_condition = torch.cuda.is_available() and config.cuda_devices is not None
         self.device = torch.device("cuda:0" if cuda_condition else "cpu")
 
         # initialize public, private, and adversarial discriminator
@@ -188,12 +186,11 @@ class AdversarialPretrainer:
         # max batch size that can fit on GPU at once for accumulation
         self.max_batch_size = config.max_batch_size
 
-        # parallelize model, move to device if necessary
-        if config.with_cuda and torch.cuda.device_count() > 1:
-            print("Using %d GPUS for training" % torch.cuda.device_count())
-            self.model = nn.DataParallel(self.model, devices_ids=list(range(torch.cuda.device_count())))
-        else:
-            self.model.to(self.device)
+        # move to device, parallelize across GPUs
+        self.model.to(self.device)
+        if config.cuda_devices is not None and torch.cuda.device_count() >= max(config.cuda_devices):
+            print("Using %d GPUS for training" % len(config.cuda_devices))
+            self.model = nn.DataParallel(self.model, device_ids=config.cuda_devices).to(self.device)
 
         self._config = config # for checkpointing
 
@@ -266,7 +263,8 @@ class AdversarialPretrainer:
         for language, batch in language_iter:
             # accumulate gradients if necessary
             if self.max_batch_size:
-                splitbatch = {key: value.split(self.max_batch_size, 0) for key, value in batch.items()}
+                splitbatch = {key: value.split(self.max_batch_size, 0)
+                        for key, value in batch.items()}
                 subbatches = []
                 for j in range(len(splitbatch['input_ids'])):
                     subbatches.append({key: value[j] for key, value in splitbatch.items()})
@@ -276,15 +274,17 @@ class AdversarialPretrainer:
             if train:
                 self.lm_optims[language].zero_grad()
 
+            # compute losses for each subbatch
             for batch in subbatches:
                 batch = {key: value.to(self.device) for key, value in batch.items()}
-                mask_logits, next_logits, language_logits, diff_loss =\
+                mask_logits, next_logits, language_logits, diff =\
                         self.model(language, batch['input_ids'], token_type_ids=batch['segment_label'], attention_mask=batch['mask'])
 
                 mask_loss = self.mask_criterion(mask_logits.transpose(1,2), batch['token_labels']).to(self.device)
                 next_loss = self.criterion(next_logits, batch['is_next']).to(self.device)
                 language_labels = self.ltoi[language] + torch.zeros(language_logits.size(0), dtype=torch.long)
                 adv_loss = -self.criterion(language_logits, language_labels.to(self.device)) # TODO correct loss
+                diff_loss = torch.sum(diff ** 2) / batch['input_ids'].size(0)
 
                 train_loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss
                 if train:
@@ -362,16 +362,9 @@ class AdversarialPretrainer:
         print("Restoring from epoch %d at" % save_state['epoch'], save_path)
 
         # initialize new trainer
-        model = arch(save_state['config'].model_config)
+        model = arch(save_state['config'])
         trainer = cls(model, save_state['config'], train_data, test_data)
         trainer.model.load_state_dict(save_state['model'])
-
-        # replace model, move to appropriate device
-        if save_state['config'].with_cuda and torch.cuda.device_count() > 1:
-            print("Using %d GPUS for training" % torch.cuda.device_count())
-            trainer.model = nn.DataParallel(trainer.model, device_ids=cuda_devices)
-        else:
-            trainer.model = trainer.model.to(trainer.device)
         
         # restore optimer states
         trainer.D_optim.load_state_dict(save_state['adv_optim'])

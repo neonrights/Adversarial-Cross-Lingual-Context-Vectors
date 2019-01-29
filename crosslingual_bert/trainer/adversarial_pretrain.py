@@ -77,35 +77,44 @@ class AdversarialBertWrapper(nn.Module):
         self.beta = config.beta
         self.gamma = config.gamma
 
-    def forward(self, component, input_ids, segment_label, mask, token_labels, is_next):
+    def forward(self,
+                component,
+                language_labels,
+                input_ids,
+                mask,
+                segment_label=None,
+                token_labels=None,
+                is_next=None):
         if component == 'adversary':
             # return logits for adversarial language prediction
-            embeddings = self.multilingual_model.embeddings(input_ids, token_type_ids)
-            _, pooled_vectors = self.multilingual_model.shared(embeddings, attention_mask)
-            return self.adversary_model(pooled_vectors)
+            embeddings = self.multilingual_model.embeddings(input_ids)
+            _, pooled_vectors = self.multilingual_model.shared(embeddings, attention_mask=mask)
+            language_logits = self.adversary_model(pooled_vectors)
+            language_loss = self.criterion(language_logits, language_labels)
+            return language_loss, language_logits
         else:
-            hidden_vectors, pooled_vectors = self.multilingual_model(component, input_ids, segmentlabel, mask)
+            hidden_vectors, pooled_vectors = self.multilingual_model(component, input_ids, segment_label, mask)
         
             # mask prediction loss
             token_logits = self.mask_model(hidden_vectors[-1])
-            mask_loss = self.mask_criterion(token_logits, token_labels)
+            mask_loss = self.mask_criterion(token_logits.transpose(2,1), token_labels)
             
             # next sentence prediction loss
             next_logits = self.next_model(pooled_vectors)
             next_loss = self.criterion(next_logits, is_next)
 
             # adversarial prediction loss
+            hidden_dim = hidden_vectors[-1].size(-1)
             public_pooled, _ = torch.split(pooled_vectors, hidden_dim // 2, -1)
             language_logits = self.adversary_model(public_pooled)
-            adv_loss = -self.crition(language_logits, language_labels)
+            adv_loss = -self.criterion(language_logits, language_labels)
 
             # public-private vector similarity loss
-            hidden_dim = hidden_vectors[-1].size(-1)
             public_vectors, private_vectors = torch.split(hidden_vectors[-1], hidden_dim // 2, -1)
             diff = torch.bmm(private_vectors, torch.transpose(public_vectors, 1, 2))
             diff_loss = torch.sum(diff ** 2) / pooled_vectors.size(0)
 
-            return mask_loss, next_loss, adv_loss, diff_loss
+            return mask_loss, next_loss, adv_loss, diff_loss, token_logits, next_logits
 
     def component_parameters(self, component):
         if component == 'adversary':
@@ -198,7 +207,7 @@ class AdversarialPretrainer:
         self.max_batch_size = config.max_batch_size
 
         # move to device, parallelize across GPUs
-        if config.cuda_devices is not None and torch.cuda.device_count() >= max(config.cuda_devices):
+        if config.cuda_devices is not None and torch.cuda.device_count() > max(config.cuda_devices) and len(config.cuda_devices) > 1:
             print("Using %d GPUS for training" % len(config.cuda_devices))
             self.model = nn.DataParallel(self.model, device_ids=config.cuda_devices)
 
@@ -237,12 +246,11 @@ class AdversarialPretrainer:
                 total_elements = 0
                 for i, batch in D_iter:
                     batch = {key: value.to(self.device) for key, value in batch.items()}
-                    logits = self.model.forward("adversary", batch["input_ids"], mask=batch['mask'])
-                    loss = self.criterion(logits, batch['language_label']).to(self.device)
+                    loss, logits = self.model.forward("adversary", **batch)
 
                     total_loss += loss.detach().item()
-                    total_correct += logits.argmax(-1).eq(batch['language_label']).sum().detach().item()
-                    total_elements += batch['language_label'].detach().nelement()
+                    total_correct += logits.argmax(-1).eq(batch['language_labels']).sum().detach().item()
+                    total_elements += batch['language_labels'].detach().nelement()
 
                     if train:
                         self.D_optim.zero_grad()
@@ -290,9 +298,11 @@ class AdversarialPretrainer:
             # compute losses for each subbatch
             for batch in subbatches:
                 batch = {key: value.to(self.device) for key, value in batch.items()}
+                batch['language_labels'] = self.ltoi[language] \
+                        + torch.zeros(batch['input_ids'].size(0), dtype=torch.long).to(self.device)
 
                 # compute losses, sum if parallelized
-                mask_loss, next_loss, adv_loss, diff_loss = self.model(language, **batch)
+                mask_loss, next_loss, adv_loss, diff_loss, mask_logits, next_logits = self.model(language, **batch)
                 mask_loss, next_loss, adv_loss, diff_loss = mask_loss.sum(), next_loss.sum(), adv_loss.sum(), diff_loss.sum()
                 loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss
 

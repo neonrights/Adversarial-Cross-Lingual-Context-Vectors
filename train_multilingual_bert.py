@@ -18,10 +18,12 @@ tokenizer = BertTokenizer("./example_data/bert-base-multilingual-cased-vocab.txt
 model_config = MultilingualConfig(
 	languages=ltoi,
 	vocab_size=len(tokenizer.vocab),
-	hidden_size=384,
-	intermediate_size=1536,
-	max_position_embeddings=256,
-	checkpoint_every=2
+	hidden_size=192,
+	num_hidden_layers=3,
+	num_attention_heads=12,
+	intermediate_size=394,
+	hidden_act='gelu',
+	max_position_embeddings=256
 )
 
 trainer_config = AdversarialPretrainerConfig(
@@ -32,7 +34,7 @@ trainer_config = AdversarialPretrainerConfig(
 	beta=1e-4,
 	gamma=1e-6,
 	with_cuda=True,
-	max_batch_size=2
+	max_batch_size=8
 )
 
 # load datasets
@@ -48,28 +50,28 @@ train_en_raw = LanguageDataset('en', "./example_data/train.en.txt",
 		tokenizer, seq_len, on_memory=False)
 
 test_ar_raw = LanguageDataset('ar', "./example_data/test.ar.txt",
-		tokenizer, seq_len, on_memory=False)
+		tokenizer, seq_len)
 test_bg_raw = LanguageDataset('bg', "./example_data/test.bg.txt",
-		tokenizer, seq_len, on_memory=False)
+		tokenizer, seq_len)
 test_de_raw = LanguageDataset('de', "./example_data/test.de.txt",
-		tokenizer, seq_len, on_memory=False)
+		tokenizer, seq_len)
 test_en_raw = LanguageDataset('en', "./example_data/test.en.txt",
-		tokenizer, seq_len, on_memory=False)
+		tokenizer, seq_len)
 
 adversary_raw = DiscriminatorDataset("./example_data/ar-bg-de-en.txt",
 		tokenizer, ltoi, seq_len, on_memory=False)
 
-train_ar_data = DataLoader(train_ar_raw, batch_size=32, num_workers=4)
-train_bg_data = DataLoader(train_bg_raw, batch_size=32, num_workers=4)
-train_de_data = DataLoader(train_de_raw, batch_size=32, num_workers=4)
-train_en_data = DataLoader(train_en_raw, batch_size=32, num_workers=4)
+train_ar_data = DataLoader(train_ar_raw, batch_size=32, num_workers=4, drop_last=True)
+train_bg_data = DataLoader(train_bg_raw, batch_size=32, num_workers=4, drop_last=True)
+train_de_data = DataLoader(train_de_raw, batch_size=32, num_workers=4, drop_last=True)
+train_en_data = DataLoader(train_en_raw, batch_size=32, num_workers=4, drop_last=True)
 
 test_ar_data = DataLoader(test_ar_raw, batch_size=8)
 test_bg_data = DataLoader(test_bg_raw, batch_size=8)
 test_de_data = DataLoader(test_de_raw, batch_size=8)
 test_en_data = DataLoader(test_en_raw, batch_size=8)
 
-adversary_data = DataLoader(adversary_raw, batch_size=64, num_workers=16)
+adversary_data = DataLoader(adversary_raw, batch_size=32, num_workers=8)
 
 train_data = {
 	'ar': train_ar_data,

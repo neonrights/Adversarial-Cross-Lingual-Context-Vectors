@@ -66,7 +66,7 @@ class DiscriminatorDataset(Dataset):
             mask = np.ones(self.max_seq_len, dtype=np.long)
 
         return {"input_ids": torch.tensor(input_ids),
-                "language_label": torch.tensor(label),
+                "language_labels": torch.tensor(label),
                 "mask": torch.tensor(mask)}
 
     def get_corpus_line(self, item):

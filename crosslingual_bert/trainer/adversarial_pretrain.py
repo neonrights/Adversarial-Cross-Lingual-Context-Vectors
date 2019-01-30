@@ -14,6 +14,51 @@ from .utils import *
 import tqdm
 
 
+class AdversarialPretrainerConfig(object):
+    def __init__(self,
+                model_config,
+                language_ids,
+                adv_repeat=5,
+                lr=1e-4,
+                beta=1e-2,
+                gamma=1e-4,
+                cuda_devices=None,
+                max_batch_size=None):
+        
+        self.__dict__.update(model_config.__dict__) # add model configuration
+        self.language_ids = language_ids
+        self.adv_repeat = adv_repeat
+        self.lr = lr
+        self.beta = beta
+        self.gamma = gamma
+        self.cuda_devices = cuda_devices
+        self.max_batch_size = max_batch_size
+
+    @classmethod
+    def from_dict(cls, json_object):
+        """Constructs a `BertConfig` from a Python dictionary of parameters."""
+        config = AdversarialPretrainerConfig(model_config=None, language_ids=None)
+        for (key, value) in six.iteritems(json_object):
+            config.__dict__[key] = value
+        return config
+
+    @classmethod
+    def from_json_file(cls, json_file):
+        """Constructs a `BertConfig` from a json file of parameters."""
+        with open(json_file, "r") as reader:
+            text = reader.read()
+        return cls.from_dict(json.loads(text))
+
+    def to_dict(self):
+        """Serializes this instance to a Python dictionary."""
+        output = copy.deepcopy(self.__dict__)
+        return output
+
+    def to_json_string(self):
+        """Serializes this instance to a JSON string."""
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+
 class NextSentencePrediction(nn.Module):
     """2-class classification model : is_next, is_not_next
     """
@@ -67,10 +112,15 @@ class AdversarialBertWrapper(nn.Module):
     def __init__(self, multilingual_model, config):
         super().__init__()
         self.multilingual_model = multilingual_model
+
+        if config.cuda_devices is not None and torch.cuda.device_count() > max(config.cuda_devices) and len(config.cuda_devices) > 1:
+            print("Using %d GPUS for training" % len(config.cuda_devices))
+            self.multilingual_model = self.multilingual_model.parallelize(config.cuda_devices)
+
         self.adversary_model = SimpleAdversary(config.hidden_size, len(config.languages))
         self.mask_model = MaskedLanguageModel(config.hidden_size*2, config.vocab_size)
         self.next_model = NextSentencePrediction(config.hidden_size*2)
-        
+
         # loss calculation
         self.criterion = nn.NLLLoss()
         self.mask_criterion = nn.NLLLoss(ignore_index=0)
@@ -123,51 +173,6 @@ class AdversarialBertWrapper(nn.Module):
             return chain(self.multilingual_model.language_parameters(component), self.mask_model.parameters(), self.next_model.parameters())
 
 
-class AdversarialPretrainerConfig(object):
-    def __init__(self,
-                model_config,
-                language_ids,
-                adv_repeat=5,
-                lr=1e-4,
-                beta=1e-2,
-                gamma=1e-4,
-                cuda_devices=None,
-                max_batch_size=None):
-        
-        self.__dict__.update(model_config.__dict__) # add model configuration
-        self.language_ids = language_ids
-        self.adv_repeat = adv_repeat
-        self.lr = lr
-        self.beta = beta
-        self.gamma = gamma
-        self.cuda_devices = cuda_devices
-        self.max_batch_size = max_batch_size
-
-    @classmethod
-    def from_dict(cls, json_object):
-        """Constructs a `BertConfig` from a Python dictionary of parameters."""
-        config = AdversarialPretrainerConfig(model_config=None, language_ids=None)
-        for (key, value) in six.iteritems(json_object):
-            config.__dict__[key] = value
-        return config
-
-    @classmethod
-    def from_json_file(cls, json_file):
-        """Constructs a `BertConfig` from a json file of parameters."""
-        with open(json_file, "r") as reader:
-            text = reader.read()
-        return cls.from_dict(json.loads(text))
-
-    def to_dict(self):
-        """Serializes this instance to a Python dictionary."""
-        output = copy.deepcopy(self.__dict__)
-        return output
-
-    def to_json_string(self):
-        """Serializes this instance to a JSON string."""
-        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
-
-
 class AdversarialPretrainer:
     """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
@@ -187,6 +192,9 @@ class AdversarialPretrainer:
         self.ltoi = config.language_ids
         self.model = AdversarialBertWrapper(multilingual_model, config)
 
+        # move to GPU
+        self.model.to(self.device)
+
         # assign data
         self.train_data = train_data
         self.test_data = test_data if test_data else train_data
@@ -205,13 +213,6 @@ class AdversarialPretrainer:
 
         # max batch size that can fit on GPU at once for accumulation
         self.max_batch_size = config.max_batch_size
-
-        # move to device, parallelize across GPUs
-        if config.cuda_devices is not None and torch.cuda.device_count() > max(config.cuda_devices) and len(config.cuda_devices) > 1:
-            print("Using %d GPUS for training" % len(config.cuda_devices))
-            self.model = nn.DataParallel(self.model, device_ids=config.cuda_devices)
-
-        self.model.to(self.device)
 
         self._config = config # for checkpointing
 

@@ -124,8 +124,6 @@ class AdversarialBertWrapper(nn.Module):
         # loss calculation
         self.criterion = nn.NLLLoss()
         self.mask_criterion = nn.NLLLoss(ignore_index=0)
-        self.beta = config.beta
-        self.gamma = config.gamma
 
     def forward(self,
                 component,

@@ -10,3 +10,10 @@ __pycache__/
 *.tsv
 *.txt
 *.log
+
+# tex files
+*.aux
+*.pdf
+*.bbl
+*.blg
+*.gz

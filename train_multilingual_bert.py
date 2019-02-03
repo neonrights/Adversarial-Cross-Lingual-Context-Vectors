@@ -11,15 +11,16 @@ from crosslingual_bert.trainer import AdversarialPretrainer, AdversarialPretrain
 
 # initialize hyperparameters
 save_path = "large-1"
-seq_len = 200 # XNLI max sequence length with wordpiece tokenization is 167
-ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
+seq_len = 192 # XNLI max sequence length with wordpiece tokenization is 167
+#ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
+ltoi = {'ar': 0, 'bg': 1}
 tokenizer = BertTokenizer("./example_data/bert-base-multilingual-cased-vocab.txt")
 
 model_config = MultilingualConfig(
 	languages=ltoi,
 	vocab_size=len(tokenizer.vocab),
-    hidden_size=384,
-    intermediate_size=768
+    #hidden_size,
+    #intermediate_size=768
 )
 
 trainer_config = AdversarialPretrainerConfig(
@@ -29,8 +30,8 @@ trainer_config = AdversarialPretrainerConfig(
 	lr=1e-4,
 	beta=1e-4,
 	gamma=1e-6,
-    cuda_devices=range(torch.cuda.device_count()),
-	max_batch_size=8
+    with_cuda=True,
+    train_freq=4
 )
 
 # load datasets
@@ -57,17 +58,22 @@ test_en_raw = LanguageDataset('en', "./data/test.en.txt",
 adversary_raw = DiscriminatorDataset("./data/shuf.ar-bg-de-en.txt",
 		tokenizer, ltoi, seq_len, on_memory=False)
 
-train_ar_data = DataLoader(train_ar_raw, batch_size=32, num_workers=4, drop_last=True)
-train_bg_data = DataLoader(train_bg_raw, batch_size=32, num_workers=4, drop_last=True)
-train_de_data = DataLoader(train_de_raw, batch_size=32, num_workers=4, drop_last=True)
-train_en_data = DataLoader(train_en_raw, batch_size=32, num_workers=4, drop_last=True)
+train_ar_data = DataLoader(train_ar_raw, batch_size=4,
+        num_workers=2, drop_last=True, pin_memory=True)
+train_bg_data = DataLoader(train_bg_raw, batch_size=4,
+        num_workers=2, drop_last=True, pin_memory=True)
+train_de_data = DataLoader(train_de_raw, batch_size=4,
+        num_workers=2, drop_last=True, pin_memory=True)
+train_en_data = DataLoader(train_en_raw, batch_size=4,
+        num_workers=2, drop_last=True, pin_memory=True)
 
-test_ar_data = DataLoader(test_ar_raw, batch_size=32)
-test_bg_data = DataLoader(test_bg_raw, batch_size=32)
-test_de_data = DataLoader(test_de_raw, batch_size=32)
-test_en_data = DataLoader(test_en_raw, batch_size=32)
+test_ar_data = DataLoader(test_ar_raw, batch_size=4, pin_memory=True)
+test_bg_data = DataLoader(test_bg_raw, batch_size=4, pin_memory=True)
+test_de_data = DataLoader(test_de_raw, batch_size=4, pin_memory=True)
+test_en_data = DataLoader(test_en_raw, batch_size=4, pin_memory=True)
 
-adversary_data = DataLoader(adversary_raw, batch_size=64, num_workers=8)
+adversary_data = DataLoader(adversary_raw, batch_size=32,
+        num_workers=8, pin_memory=True)
 
 train_data = {
 	'ar': train_ar_data,

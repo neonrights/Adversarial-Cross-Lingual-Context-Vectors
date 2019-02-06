@@ -53,12 +53,6 @@ class MultilingualBert(nn.Module):
 			self.private[language].parameters(),
 			self.embeddings.parameters())
 
-	def parallelize(self, device_ids=None):
-		self.shared = nn.DataParallel(self.shared, device_ids=device_ids)
-		self.private = {language: nn.DataParallel(model, device_ids=device_ids)
-				for language, model in self.private.items()}
-
-		return self
 
 class MultilingualTranslator(nn.Module):
 	"""Universal to target language translation model using transformer architecture

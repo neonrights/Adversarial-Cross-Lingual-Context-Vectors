@@ -1,2 +1,3 @@
-from .adversarial_pretrain import AdversarialPretrainer, AdversarialPretrainerConfig
+from .adversarial_pretrain import AdversarialPretrainer, AdversarialPretrainerConfig,
+		DistributedAdversarialPretrainer
 from .translator_train import TranslatorTrainer

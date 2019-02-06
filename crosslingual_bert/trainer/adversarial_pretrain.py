@@ -1,18 +1,18 @@
 import os
 import json
 import six
-from itertools import chain
-
 import torch
 import torch.nn as nn
+
+from itertools import chain
 from torch.optim import Adam, SGD
 from torch.utils.data import DataLoader
+from torch.nn.parallel import DistributedDataParallel
 
 from .optimization import BERTAdam
 from .utils import *
 
 import tqdm
-import pdb
 
 
 class AdversarialPretrainerConfig(object):
@@ -24,7 +24,8 @@ class AdversarialPretrainerConfig(object):
                 beta=1e-2,
                 gamma=1e-4,
                 with_cuda=True,
-                train_freq=None):
+                train_freq=None,
+                share_file=None):
         
         self.__dict__.update(model_config.__dict__) # add model configuration
         self.language_ids = language_ids
@@ -34,6 +35,7 @@ class AdversarialPretrainerConfig(object):
         self.gamma = gamma
         self.with_cuda = with_cuda
         self.train_freq = train_freq
+        self.share_file = share_file
 
     @classmethod
     def from_dict(cls, json_object):
@@ -308,8 +310,7 @@ class AdversarialPretrainer:
 
             if train:
                 # average loss over accumulation and GPUs
-                loss = loss.sum() / (loss.size(0) * self.train_freq)
-                #pdb.set_trace()
+                loss = loss.sum()
                 loss.backward()
 
             mask_loss, next_loss, adv_loss, diff_loss, mask_acc, next_acc =\
@@ -397,3 +398,47 @@ class AdversarialPretrainer:
             trainer.lm_optims[key].load_state_dict(save_state['optimizers'][key])
 
         return trainer, save_state['epoch']
+
+
+class DistributedAdversarialPretrainer(AdversarialPretrainer):
+    """Adversarial pre-training on crosslingual BERT model for a set of languages
+    """
+    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None):
+        """
+        :param multilingual_model: a multilingual sequence model which you want to train
+        :param config: config of trainer containing parameters and total word vocab size
+        :param train_data: a dictionary of dataloaders specifying train data
+        :param test_data: a dictionary of dataloaders specifying test data, if none train_data is used instead
+        """
+
+        # Setup cuda device for BERT training, argument -c, --cuda should be true
+        self.device = torch.device("cuda:%d" % config.gpu_id)
+
+        # initialize public, private, and adversarial discriminator
+        self.ltoi = config.language_ids
+        self.model = AdversarialBertWrapper(multilingual_model, config)
+
+        # move to GPU
+        self.model.to(self.device)
+        self.model = DistributedDataParallel(self.model, device_ids=[config.gpu_id], output_device=config.gpu_id)
+
+        # assign data
+        self.train_data = train_data
+        self.test_data = test_data if test_data else train_data
+        
+        # initialize loss function and optimizers
+        self.D_repeat = config.adv_repeat
+
+        # initialize optimizers
+        self.D_optim = Adam(self.model.module.component_parameters("adversary"), config.lr) # adversary optimizer
+        self.lm_optim = BERTAdam(self.model.module.component_parameters(), config.lr)
+        
+        # hyperparameters for loss
+        self.beta = config.beta
+        self.gamma = config.gamma
+
+        # how many iterations to accumulate gradients for
+        self.train_freq = config.train_freq if config.train_freq is not None else 1
+
+        self._config = config # for checkpointing
+

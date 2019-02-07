@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from .optimization import BERTAdam
+from .optimization import BertAdam
 from .utils import *
 
 import tqdm
@@ -52,7 +52,7 @@ class TranslatorTrainer:
         self.test_data = test_data
 
         # Setting the Adam optimizer with hyper-param
-        self.optims = {language: BERTAdam(self.model.language_parameters(language), lr=lr)
+        self.optims = {language: BertAdam(self.model.language_parameters(language), lr=lr)
                 for language in self.languages}
 
         # Using Negative Log Likelihood Loss function

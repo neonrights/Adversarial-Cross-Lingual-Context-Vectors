@@ -9,7 +9,7 @@ from torch.optim import Adam, SGD
 from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel
 
-from .optimization import BERTAdam
+from .optimization import BertAdam
 from .utils import *
 
 import tqdm
@@ -214,10 +214,10 @@ class AdversarialPretrainer:
         # initialize optimizers
         if parallelize:
             self.D_optim = Adam(self.model.module.component_parameters("adversary"), config.lr)
-            self.lm_optim = BERTAdam(self.model.module.component_parameters(), config.lr)
+            self.lm_optim = BertAdam(self.model.module.component_parameters(), config.lr)
         else:
             self.D_optim = Adam(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
-            self.lm_optim = BERTAdam(self.model.component_parameters(), config.lr)
+            self.lm_optim = BertAdam(self.model.component_parameters(), config.lr)
         
         # hyperparameters for loss
         self.beta = config.beta
@@ -371,7 +371,7 @@ class AdversarialPretrainer:
         current_state = {
             'epoch': epoch,
             'model': self.model.state_dict(),
-            'optimizers': {key: value.state_dict() for key, value in self.lm_optims.items()},
+            'optimizer': self.lm_optim.state_dict(),
             'adv_optim': self.D_optim.state_dict(),
             'config': self._config
         }
@@ -394,8 +394,7 @@ class AdversarialPretrainer:
         
         # restore optimer states
         trainer.D_optim.load_state_dict(save_state['adv_optim'])
-        for key in trainer.lm_optims:
-            trainer.lm_optims[key].load_state_dict(save_state['optimizers'][key])
+        trainer.lm_optim.load_state_dict(save_state['optimizer'])
 
         return trainer, save_state['epoch']
 
@@ -431,7 +430,7 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
 
         # initialize optimizers
         self.D_optim = Adam(self.model.module.component_parameters("adversary"), config.lr) # adversary optimizer
-        self.lm_optim = BERTAdam(self.model.module.component_parameters(), config.lr)
+        self.lm_optim = BertAdam(self.model.module.component_parameters(), config.lr)
         
         # hyperparameters for loss
         self.beta = config.beta

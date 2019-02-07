@@ -1,4 +1,5 @@
 import os
+import os.path as path
 import argparse
 import torch
 import torch.distributed as dist
@@ -14,50 +15,59 @@ def main():
 	parser = argparse.ArgumentParser()
 
 	# model parameters
-	parser.add_argument("vocab-file", type=str, default="/example_data/bert-base-multilingual-cased-vocab.txt")
-	parser.add_argument("hidden-size", type=int, default=768)
-	parser.add_argument("num-hidden-layers", type=int, default=12)
-	parser.add_argument("num-attention-heads", type=int, default=12)
-	parser.add_argument("intermediate-size", type=int, default=3072)
-	parser.add_argument("hidden-act", type=str, default="gelu")
-	parser.add_argument("hidden-dropout-prob", type=float, default=0.1)
-	parser.add_argument("attention-dropout-prob", type=float, default=0.1)
-	parser.add_argument("max-position-embeddings", type=int, default=512)
-	parser.add_argument("type-vocab-size", type=int, default=16)
-	parser.add_argument("initializer-range", type=float, default=0.02)
-	parser.add_argument("checkpoint-nth-layer", type=int, default=None)
+	parser.add_argument("--vocab-file", type=str, default="./example_data/bert-base-multilingual-cased-vocab.txt")
+	parser.add_argument("--hidden-size", type=int, default=768)
+	parser.add_argument("--num-hidden-layers", type=int, default=12)
+	parser.add_argument("--num-attention-heads", type=int, default=12)
+	parser.add_argument("--intermediate-size", type=int, default=3072)
+	parser.add_argument("--hidden-act", type=str, default="gelu")
+	parser.add_argument("--hidden-dropout-prob", type=float, default=0.1)
+	parser.add_argument("--attention-dropout-prob", type=float, default=0.1)
+	parser.add_argument("--max-position-embeddings", type=int, default=512)
+	parser.add_argument("--type-vocab-size", type=int, default=16)
+	parser.add_argument("--initializer-range", type=float, default=0.02)
+	parser.add_argument("--checkpoint-nth-layer", type=int, default=None)
 
 	# training parameters
-	parser.add_argument("batch-size", type=int, default=32)
-	parser.add_argument("adversary-batch-size", type=int, default=64)
-	parser.add_argument("sequence-length", type=int, default=192) # XNLI max sequence length with wordpiece tokenization is 167
-	parser.add_argument("adversary-repeat", type=int, default=5)
-	parser.add_argument("learning-rate", type=float, default=1e-4)
-	parser.add_argument("adversary-loss-weight", type=float, default=1e-4)
-	parser.add_argument("frobenius-loss-weight", type=float, default=1e-6)
-	parser.add_argument("epochs", type=int, default=1000)
+	parser.add_argument("--batch-size", type=int, default=32)
+	parser.add_argument("--adversary-batch-size", type=int, default=64)
+	parser.add_argument("--sequence-length", type=int, default=192) # XNLI max sequence length with wordpiece tokenization is 167
+	parser.add_argument("--adversary-repeat", type=int, default=5)
+	parser.add_argument("--learning-rate", type=float, default=1e-4)
+	parser.add_argument("--adversary-loss-weight", type=float, default=1e-4)
+	parser.add_argument("--frobenius-loss-weight", type=float, default=1e-6)
+	parser.add_argument("--epochs", type=int, default=1000)
 
 	# checkpoint parameters
-	parser.add_argument("save-folder", type=str)
-	parser.add_argument("restore-checkpoint", action="store_true")
-	parser.add_argument("checkpoint-frequency", type=int, default=10)
+	parser.add_argument("--checkpoint-folder", type=str, default="./checkpoints/")
+	parser.add_argument("--restore-checkpoint", action="store_true")
+	parser.add_argument("--checkpoint-frequency", type=int, default=10)
 
 	# hardware parameters
-	parser.add_argument("max-device-batch-size", type=int, default=4)
-	parser.add_argument("enable-cuda", action="store_true")
-	parser.add_argument("distributed", action="store_true")
-	parser.add_argument("share_file", type=str)
-	parser.add_argument("batch-workers", type=int, default=None)
-	parser.add_argument("adversary-workers", type=int, default=None)
+	parser.add_argument("--max-device-batch-size", type=int, default=None)
+	parser.add_argument("--training-step-frequency", type=int, default=None)
+	parser.add_argument("--enable-cuda", action="store_true")
+	parser.add_argument("--distributed", action="store_true")
+	parser.add_argument("--share-file", type=str)
+	parser.add_argument("--batch-workers", type=int, default=0)
+	parser.add_argument("--adversary-workers", type=int, default=0)
 
 	# debugging
-	parser.add_argument("debug", action="store_true")
+	parser.add_argument("--debug", action="store_true")
 
 	args = parser.parse_args()
 
-	if args.distributed and args.enable_cuda:
+	args.world_size = torch.cuda.device_count() if args.distributed else 1
+
+	if args.max_device_batch_size is None:
+		args.max_device_batch_size = args.batch_size
+
+	if args.training_step_frequency is None:
+		args.training_step_frequency = max(1, args.batch_size // (args.max_device_batch_size * args.world_size))
+
+	if args.distributed:
+		args.enable_cuda = True
 		# multi-proces multi-GPU
-		args.world_size = torch.cuda.device_count()
 		mp.spawn(worker, nprocs=args.world_size, args=(args,))
 	else:
 		# single process multi-GPU
@@ -76,6 +86,7 @@ def worker(index, args):
 	tokenizer = BertTokenizer(args.vocab_file)
 
 	model_config = MultilingualConfig(
+		languages=ltoi,
 		vocab_size=len(tokenizer.vocab),
 	    hidden_size=args.hidden_size,
 	    num_hidden_layers=args.num_hidden_layers,
@@ -90,7 +101,6 @@ def worker(index, args):
 	    checkpoint_every=args.checkpoint_nth_layer
 	)
 
-	train_freq = max(1, args.batch_size // (args.max_device_batch_size * args.world_size))
 	trainer_config = AdversarialPretrainerConfig(
 		model_config=model_config,
 		language_ids=ltoi,
@@ -99,7 +109,7 @@ def worker(index, args):
 		beta=args.adversary_loss_weight,
 		gamma=args.frobenius_loss_weight,
 	    with_cuda=args.enable_cuda,
-	    train_freq=train_freq
+	    train_freq=args.training_step_frequency
 	)
 
 	# load datasets
@@ -123,7 +133,7 @@ def worker(index, args):
 	test_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length))
 			for language, file_path in test_files]
 
-	if distributed:
+	if args.distributed:
 		train_raw = [(language, dataset, DistributedSampler(dataset, num_replicas=args.world_size, rank=args.rank))
 					for language, dataset in train_raw]
 		adversary_sampler = DistributedSampler(adversary_raw)
@@ -139,7 +149,7 @@ def worker(index, args):
 	train_data = {language: DataLoader(dataset, batch_size=args.batch_size, sampler=sampler,
 	        		num_workers=args.batch_workers, shuffle=True, drop_last=True, pin_memory=args.enable_cuda)
 			for language, dataset, sampler in train_raw}
-	train_data["adversary"] = DataLoader(adversary_raw, batch_size=args.adversary_batch_size, sampler=sampler,
+	train_data["adversary"] = DataLoader(adversary_raw, batch_size=args.adversary_batch_size, sampler=adversary_sampler,
 			num_workers=args.adversary_workers, shuffle=True, pin_memory=args.enable_cuda)
 
 	test_data = {language: DataLoader(dataset, batch_size=args.batch_size, sampler=sampler,
@@ -148,39 +158,45 @@ def worker(index, args):
 
 	# initialize model and trainer
 	trainer_class = DistributedAdversarialPretrainer if args.distributed else AdversarialPretrainer
+	loss_log = path.join(args.checkpoint_folder, "loss.tsv")
 	try:
 		if not args.restore_checkpoint:
 			raise FileNotFoundError
 
 		# get best loss from loss record
-		with open(os.path.join(args.save_folder, "loss.tsv"), 'r') as f:
+		with open(loss_log, 'r') as f:
 			lines = f.readlines()
 
 		best_epoch = 0
 		best_loss = 1e9
 		for line in lines[1:]: # skip column names
-			epoch, train_loss, test_loss = (int(val) for val in line.strip().split('\t'))
+			epoch, _, test_loss = line.strip().split('\t')
+			epoch = int(epoch)
+			test_loss = float(test_loss)
 			if test_loss < best_loss:
 				best_epoch = epoch
 				best_loss = test_loss
 
 		# try restoring from checkpoint
-		trainer, start = trainer_class.load_checkpoint(os.path.join(args.save_folder, 'checkpoint.state'),
-				MultilingualBert, train_data, test_data, verbose=args.rank == 0)
+		trainer, start = trainer_class.load_checkpoint(os.path.join(args.checkpoint_folder, 'checkpoint.state'),
+				MultilingualBert, train_data, test_data)
 	except FileNotFoundError:
 		model = MultilingualBert(model_config)
-		trainer = trainer_class(model, trainer_config, train_data, test_data, verbose=args.rank == 0)
+		trainer = trainer_class(model, trainer_config, train_data, test_data)
 		start = 0
 		best_epoch = 0
 		best_loss = 1e9
 
-	if not os.path.isdir(args.save_folder):
-		os.mkdir(args.save_folder)
+	if not os.path.isdir(args.checkpoint_folder):
+		os.mkdir(args.checkpoint_folder)
 
 	# train model, checkpoint every 10th epoch
+	checkpoint_file = path.join(args.checkpoint_folder, "checkpoint.state")
+	best_model_file = path.join(args.checkpoint_folder, "best.model.state")
+	save_epoch_file = path.join(args.checkpoint_folder, "epoch.%d.state")
 	try:
 		if args.rank == 0:
-			f = open(os.path.join(args.save_folder, "loss.tsv"), 'w+' if start == 0 else 'a')
+			f = open(loss_log, 'w+' if start == 0 else 'a')
 			if start == 0:
 				f.write('epoch\ttrain\ttest\n')
 
@@ -191,15 +207,15 @@ def worker(index, args):
 
 			if args.rank == 0:
 				f.write("%d\t%.6f\t%.6f\n" % (epoch, train_loss, test_loss))
-				trainer.save(epoch, file_path=os.path.join(args.save_folder, "checkpoint.state"))
+				trainer.save(epoch, checkpoint_file)
 
-				if epoch % 10 == 0:
-					trainer.save(epoch, os.path.join(args.save_folder, "epoch.%d.state" % epoch))
+				if epoch % args.checkpoint_frequency == 0:
+					trainer.save(epoch, save_epoch_file % epoch)
 
 				if test_loss < best_loss:
 					best_loss = test_loss
 					best_epoch = epoch
-					trainer.save(epoch, os.path.join(args.save_folder, "best.model.state"))
+					trainer.save(epoch, best_model_file)
 
 			print("test loss %.6f" % test_loss)
 	finally:
@@ -207,4 +223,8 @@ def worker(index, args):
 			f.close()
 
 	print("best loss %f at epoch %d" % (best_loss, best_epoch))
+
+
+if __name__ == '__main__':
+	main()
 

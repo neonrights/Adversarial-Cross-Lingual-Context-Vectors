@@ -11,7 +11,8 @@ from crosslingual_bert.dataset import BertTokenizer, LanguageDataset, Discrimina
 from crosslingual_bert.model import MultilingualBert, MultilingualConfig
 from crosslingual_bert.trainer import AdversarialPretrainer, DistributedAdversarialPretrainer, AdversarialPretrainerConfig
 
-def main():
+
+if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 
 	# model parameters
@@ -48,9 +49,9 @@ def main():
 	parser.add_argument("--training-step-frequency", type=int, default=None)
 	parser.add_argument("--enable-cuda", action="store_true")
 	parser.add_argument("--distributed", action="store_true")
-	parser.add_argument("--share-file", type=str)
 	parser.add_argument("--batch-workers", type=int, default=0)
 	parser.add_argument("--adversary-workers", type=int, default=0)
+	parser.add_argument("--local_rank", type=int, default=0)
 
 	# debugging
 	parser.add_argument("--debug", action="store_true")
@@ -58,28 +59,14 @@ def main():
 	args = parser.parse_args()
 
 	args.world_size = torch.cuda.device_count() if args.distributed else 1
-
 	if args.max_device_batch_size is None:
 		args.max_device_batch_size = args.batch_size
-
 	if args.training_step_frequency is None:
 		args.training_step_frequency = max(1, args.batch_size // (args.max_device_batch_size * args.world_size))
 
 	if args.distributed:
-		args.enable_cuda = True
-		# multi-proces multi-GPU
-		mp.spawn(worker, nprocs=args.world_size, args=(args,))
-	else:
-		# single process multi-GPU
-		worker(0, args)
-
-
-def worker(index, args):
-	args.gpu_id = index
-	args.rank = index
-	if args.distributed:
-		dist.init_process_group(backend='nccl', init_method=args.share_file,
-				world_size=args.world_size, rank=args.rank)
+		torch.cuda.set_device(args.local_rank)
+		dist.init_process_group(backend='nccl', rank=args.local_rank)
 
 	# initialize model and trainer configurations
 	ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
@@ -109,7 +96,8 @@ def worker(index, args):
 		beta=args.adversary_loss_weight,
 		gamma=args.frobenius_loss_weight,
 	    with_cuda=args.enable_cuda,
-	    train_freq=args.training_step_frequency
+	    train_freq=args.training_step_frequency,
+		gpu_id=args.local_rank
 	)
 
 	# load datasets
@@ -134,11 +122,11 @@ def worker(index, args):
 			for language, file_path in test_files]
 
 	if args.distributed:
-		train_raw = [(language, dataset, DistributedSampler(dataset, num_replicas=args.world_size, rank=args.rank))
+		train_raw = [(language, dataset, DistributedSampler(dataset, num_replicas=args.world_size, rank=args.local_rank))
 					for language, dataset in train_raw]
 		adversary_sampler = DistributedSampler(adversary_raw)
 
-		test_raw = [(language, dataset, DistributedSampler(dataset, num_replicas=args.world_size, rank=args.rank))
+		test_raw = [(language, dataset, DistributedSampler(dataset, num_replicas=args.world_size, rank=args.local_rank))
 					for language, dataset in test_raw]
 	else:
 		train_raw = [(language, dataset, None) for language, dataset in train_raw]
@@ -147,18 +135,19 @@ def worker(index, args):
 		test_raw = [(language, dataset, None) for language, dataset in test_raw]
 
 	train_data = {language: DataLoader(dataset, batch_size=args.batch_size, sampler=sampler,
-	        		num_workers=args.batch_workers, shuffle=True, drop_last=True, pin_memory=args.enable_cuda)
+	        		num_workers=args.batch_workers, drop_last=True, pin_memory=args.enable_cuda)
 			for language, dataset, sampler in train_raw}
 	train_data["adversary"] = DataLoader(adversary_raw, batch_size=args.adversary_batch_size, sampler=adversary_sampler,
-			num_workers=args.adversary_workers, shuffle=True, pin_memory=args.enable_cuda)
+			num_workers=args.adversary_workers, pin_memory=args.enable_cuda)
 
 	test_data = {language: DataLoader(dataset, batch_size=args.batch_size, sampler=sampler,
-	        		num_workers=args.batch_workers, shuffle=True, drop_last=True, pin_memory=args.enable_cuda)
+	        		num_workers=args.batch_workers, drop_last=True, pin_memory=args.enable_cuda)
 			for language, dataset, sampler in test_raw}
 
 	# initialize model and trainer
 	trainer_class = DistributedAdversarialPretrainer if args.distributed else AdversarialPretrainer
 	loss_log = path.join(args.checkpoint_folder, "loss.tsv")
+	print("initializing model")
 	try:
 		if not args.restore_checkpoint:
 			raise FileNotFoundError
@@ -179,10 +168,10 @@ def worker(index, args):
 
 		# try restoring from checkpoint
 		trainer, start = trainer_class.load_checkpoint(os.path.join(args.checkpoint_folder, 'checkpoint.state'),
-				MultilingualBert, train_data, test_data)
+				MultilingualBert, train_data, test_data, verbose=args.local_rank == 0)
 	except FileNotFoundError:
 		model = MultilingualBert(model_config)
-		trainer = trainer_class(model, trainer_config, train_data, test_data)
+		trainer = trainer_class(model, trainer_config, train_data, test_data, verbose=args.local_rank == 0)
 		start = 0
 		best_epoch = 0
 		best_loss = 1e9
@@ -191,21 +180,20 @@ def worker(index, args):
 		os.mkdir(args.checkpoint_folder)
 
 	# train model, checkpoint every 10th epoch
+	print("starting training")
 	checkpoint_file = path.join(args.checkpoint_folder, "checkpoint.state")
 	best_model_file = path.join(args.checkpoint_folder, "best.model.state")
 	save_epoch_file = path.join(args.checkpoint_folder, "epoch.%d.state")
-	try:
-		if args.rank == 0:
-			f = open(loss_log, 'w+' if start == 0 else 'a')
+	if args.local_rank == 0:
+		with open(loss_log, 'w+' if start == 0 else 'a') as f:
 			if start == 0:
 				f.write('epoch\ttrain\ttest\n')
 
-		for epoch in range(start, args.epochs):
-			epoch += 1
-			train_loss = trainer.train(epoch)
-			test_loss = trainer.test(epoch)
+			for epoch in range(start, args.epochs):
+				epoch += 1
+				train_loss = trainer.train(epoch)
+				test_loss = trainer.test(epoch)
 
-			if args.rank == 0:
 				f.write("%d\t%.6f\t%.6f\n" % (epoch, train_loss, test_loss))
 				trainer.save(epoch, checkpoint_file)
 
@@ -217,14 +205,13 @@ def worker(index, args):
 					best_epoch = epoch
 					trainer.save(epoch, best_model_file)
 
-			print("test loss %.6f" % test_loss)
-	finally:
-		if args.rank == 0:
-			f.close()
+				print("test loss %.6f" % test_loss)
 
-	print("best loss %f at epoch %d" % (best_loss, best_epoch))
+		print("best loss %f at epoch %d" % (best_loss, best_epoch))
+	else:
+		for epoch in range(start, args.epochs):
+			epoch += 1
+			train_loss = trainer.train(epoch)
+			test_loss = trainer.test(epoch)
 
-
-if __name__ == '__main__':
-	main()
 

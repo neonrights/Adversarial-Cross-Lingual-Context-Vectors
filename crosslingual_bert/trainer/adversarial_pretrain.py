@@ -184,7 +184,7 @@ class AdversarialBertWrapper(nn.Module):
 class AdversarialPretrainer:
     """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
-    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, verbose=True):
+    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, verbose=True, seed=None):
         """
         :param multilingual_model: a multilingual sequence model which you want to train
         :param config: config of trainer containing parameters and total word vocab size

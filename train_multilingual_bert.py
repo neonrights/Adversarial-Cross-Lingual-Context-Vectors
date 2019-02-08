@@ -49,7 +49,7 @@ if __name__ == '__main__':
 	parser.add_argument("--enable_cuda", action="store_true")
 	parser.add_argument("--batch_workers", type=int, default=0)
 	parser.add_argument("--adversary_workers", type=int, default=0)
-	parser.add_argument("--local_rank", type=int, default=False)
+	parser.add_argument("--local_rank", type=int, default=None)
 
 	# debugging
 	parser.add_argument("--debug", action="store_true")
@@ -58,8 +58,7 @@ if __name__ == '__main__':
 
 	args.world_size = torch.cuda.device_count() if args.local_rank else 1
 
-	pdb.set_trace()
-	if args.local_rank:
+	if args.local_rank is not None:
 		torch.cuda.set_device(args.local_rank)
 		dist.init_process_group(backend='nccl', rank=args.local_rank)
 		torch.manual_seed(80085) # make sure all weight initializations are the same
@@ -117,7 +116,7 @@ if __name__ == '__main__':
 	test_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length))
 			for language, file_path in test_files]
 
-	if args.local_rank:
+	if args.local_rank is not None:
 		train_raw = [(language, dataset, DistributedSampler(dataset, num_replicas=args.world_size, rank=args.local_rank))
 					for language, dataset in train_raw]
 		adversary_sampler = DistributedSampler(adversary_raw)
@@ -141,7 +140,7 @@ if __name__ == '__main__':
 			for language, dataset, sampler in test_raw}
 
 	# initialize model and trainer
-	trainer_class = DistributedAdversarialPretrainer if args.local_rank else AdversarialPretrainer
+	trainer_class = DistributedAdversarialPretrainer if args.local_rank is not None else AdversarialPretrainer
 	loss_log = path.join(args.checkpoint_folder, "loss.tsv")
 	print("initializing model")
 	try:
@@ -180,7 +179,7 @@ if __name__ == '__main__':
 	checkpoint_file = path.join(args.checkpoint_folder, "checkpoint.state")
 	best_model_file = path.join(args.checkpoint_folder, "best.model.state")
 	save_epoch_file = path.join(args.checkpoint_folder, "epoch.%d.state")
-	if args.local_rank == 0:
+	if not args.local_rank:
 		with open(loss_log, 'w+' if start == 0 else 'a') as f:
 			if start == 0:
 				f.write('epoch\ttrain\ttest\n')

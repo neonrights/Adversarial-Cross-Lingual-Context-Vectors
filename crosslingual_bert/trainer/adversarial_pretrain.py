@@ -184,7 +184,7 @@ class AdversarialBertWrapper(nn.Module):
 class AdversarialPretrainer:
     """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
-    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, verbose=True, seed=None):
+    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, verbose=True):
         """
         :param multilingual_model: a multilingual sequence model which you want to train
         :param config: config of trainer containing parameters and total word vocab size
@@ -434,8 +434,11 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self.model = AdversarialBertWrapper(multilingual_model, config)
 
         # move to GPU
+        print("moving model to GPU")
         self.model.to(self.device)
-        self.model = DistributedDataParallel(self.model, device_ids=[config.gpu_id], output_device=config.gpu_id)
+        print("moved model to GPU")
+        self.model = DistributedDataParallel(self.model, device_ids=[config.gpu_id])
+        print("set up distributed model")
 
         # assign data
         self.train_data = train_data

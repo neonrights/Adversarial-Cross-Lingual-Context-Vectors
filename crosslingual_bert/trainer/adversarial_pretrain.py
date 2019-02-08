@@ -175,6 +175,8 @@ class AdversarialBertWrapper(nn.Module):
     def component_parameters(self, component=None):
         if component == 'adversary':
             return self.adversary_model.parameters()
+        elif component is None:
+            return chain(self.multilingual_model.parameters(), self.mask_model.parameters(), self.next_model.parameters())
         else:
             return chain(self.multilingual_model.language_parameters(component), self.mask_model.parameters(), self.next_model.parameters())
 
@@ -182,7 +184,7 @@ class AdversarialBertWrapper(nn.Module):
 class AdversarialPretrainer:
     """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
-    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, verbose=True):
+    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, verbose=True, seed=None):
         """
         :param multilingual_model: a multilingual sequence model which you want to train
         :param config: config of trainer containing parameters and total word vocab size
@@ -217,13 +219,11 @@ class AdversarialPretrainer:
         # initialize optimizers
         if parallelize:
             self.D_optim = Adam(self.model.module.component_parameters("adversary"), config.lr)
-            self.lm_optims = {language: BertAdam(self.model.module.component_parameters(), config.lr)
-                for language in self.ltoi}
+            self.lm_optims = BertAdam(self.model.module.component_parameters(), config.lr)
         else:
             self.D_optim = Adam(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
-            self.lm_optims = {language: BertAdam(self.model.component_parameters(language), config.lr)
-                for language in self.ltoi}
-        
+            self.lm_optims = BertAdam(self.model.component_parameters(), config.lr)
+
         # hyperparameters for loss
         self.beta = config.beta
         self.gamma = config.gamma
@@ -233,6 +233,7 @@ class AdversarialPretrainer:
 
         self._config = config # for checkpointing
         self.verbose = verbose
+        self.seed = seed
 
     def train(self, epoch):
         return self.iteration(epoch, self.train_data)
@@ -286,7 +287,7 @@ class AdversarialPretrainer:
 
         micro_loss = 0
         if train:
-            language_iter = SmoothedRandomSampler({language: data[language] for language in self.ltoi})
+            language_iter = SmoothedRandomSampler({language: data[language] for language in self.ltoi}, seed=self.seed)
         else:
             language_iter = SequentialSampler({language: data[language] for language in self.ltoi})
 
@@ -305,8 +306,8 @@ class AdversarialPretrainer:
         total_next_acc = 0.
         for i, (language, batch) in language_iter:
             # accumulate gradients if necessary
-            if train:
-                self.lm_optims[language].zero_grad()
+            if train and i & self.train_freq == 0:
+                self.lm_optims.zero_grad()
 
             # compute losses for each subbatch
             batch['language_labels'] = self.ltoi[language] \
@@ -338,8 +339,8 @@ class AdversarialPretrainer:
             total_mask_acc += mask_acc.item()
             total_next_acc += next_acc.item()
 
-            if train:
-                self.lm_optims[language].step()
+            if train and (i+1) % self.train_freq == 0:
+                self.lm_optims.step()
 
         # calculate avg loss and accuracy
         total_batches = len(language_iter)
@@ -377,13 +378,15 @@ class AdversarialPretrainer:
         if not os.path.exists(directory_path):
             os.makedirs(directory_path)
 
+        with open(os.path.join(directory_path, "config.json"), 'w+') as f:
+            f.write(self._config.to_json_string())
+
         # store optimizer state and model
         current_state = {
             'epoch': epoch,
             'model': self.model.state_dict(),
-            'optimizer': self.lm_optim.state_dict(),
-            'adv_optim': self.D_optim.state_dict(),
-            'config': self._config
+            'optimizer': self.lm_optims.state_dict(),
+            'adv_optim': self.D_optim.state_dict()
         }
         torch.save(current_state, file_path)
 
@@ -397,6 +400,9 @@ class AdversarialPretrainer:
         save_state = torch.load(save_path)
         print("Restoring from epoch %d at" % save_state['epoch'], save_path)
 
+        directory_path, _ = os.path.split(save_state)
+        config = AdversarialPretrainerConfig.from_json_file(os.path.join(directory_path, "config.json"))
+
         # initialize new trainer
         model = arch(save_state['config'])
         trainer = cls(model, save_state['config'], train_data, test_data, verbose)
@@ -404,7 +410,7 @@ class AdversarialPretrainer:
         
         # restore optimer states
         trainer.D_optim.load_state_dict(save_state['adv_optim'])
-        trainer.lm_optim.load_state_dict(save_state['optimizer'])
+        trainer.lm_optims.load_state_dict(save_state['optimizer'])
 
         return trainer, save_state['epoch']
 
@@ -412,7 +418,7 @@ class AdversarialPretrainer:
 class DistributedAdversarialPretrainer(AdversarialPretrainer):
     """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
-    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, verbose=True):
+    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, verbose=True, seed=None):
         """
         :param multilingual_model: a multilingual sequence model which you want to train
         :param config: config of trainer containing parameters and total word vocab size
@@ -428,11 +434,8 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self.model = AdversarialBertWrapper(multilingual_model, config)
 
         # move to GPU
-        print("moving model to GPU")
         self.model.to(self.device)
-        print("moved model to GPU")
-        self.model = DistributedDataParallel(self.model, device_ids=[config.gpu_id])
-        print("set up distributed model")
+        self.model = DistributedDataParallel(self.model, device_ids=[config.gpu_id], output_device=config.gpu_id)
 
         # assign data
         self.train_data = train_data
@@ -443,8 +446,7 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
 
         # initialize optimizers
         self.D_optim = Adam(self.model.module.component_parameters("adversary"), config.lr) # adversary optimizer
-        self.lm_optims = {language: BertAdam(self.model.module.component_parameters(language), config.lr)
-            for language in self.ltoi}
+        self.lm_optims = BertAdam(self.model.module.component_parameters(), config.lr)
         
         # hyperparameters for loss
         self.beta = config.beta
@@ -455,4 +457,5 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
 
         self._config = config # for checkpointing
         self.verbose = verbose
+        self.seed = seed
 

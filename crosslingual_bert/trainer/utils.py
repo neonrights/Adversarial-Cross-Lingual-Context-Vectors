@@ -5,13 +5,15 @@ class SmoothedRandomSampler:
     """Randomly sample from datasets in proportion to their size downsampled
     by a factor.
     """
-    def __init__(self, datasets, factor=0.7):
+    def __init__(self, datasets, factor=0.7, seed=None):
         self.datasets = datasets
         probs = {key: len(value)**factor for key, value in datasets.items()}
         total = sum(probs.values())
         self.probs = {name: prob / total for name, prob in probs.items()}
         min_name = min(datasets, key=lambda name: len(datasets[name]))
         self.length = int(len(datasets[min_name]) / self.probs[min_name])
+        if seed is not None:
+            random.seed(seed)
 
     def __len__(self):
         return self.length

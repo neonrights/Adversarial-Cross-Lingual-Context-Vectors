@@ -10,63 +10,60 @@ from torch.utils.data import DataLoader, DistributedSampler
 from crosslingual_bert.dataset import BertTokenizer, LanguageDataset, DiscriminatorDataset
 from crosslingual_bert.model import MultilingualBert, MultilingualConfig
 from crosslingual_bert.trainer import AdversarialPretrainer, DistributedAdversarialPretrainer, AdversarialPretrainerConfig
+import pdb
 
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 
 	# model parameters
-	parser.add_argument("--vocab-file", type=str, default="./example_data/bert-base-multilingual-cased-vocab.txt")
-	parser.add_argument("--hidden-size", type=int, default=768)
-	parser.add_argument("--num-hidden-layers", type=int, default=12)
-	parser.add_argument("--num-attention-heads", type=int, default=12)
-	parser.add_argument("--intermediate-size", type=int, default=3072)
-	parser.add_argument("--hidden-act", type=str, default="gelu")
-	parser.add_argument("--hidden-dropout-prob", type=float, default=0.1)
-	parser.add_argument("--attention-dropout-prob", type=float, default=0.1)
-	parser.add_argument("--max-position-embeddings", type=int, default=512)
-	parser.add_argument("--type-vocab-size", type=int, default=16)
-	parser.add_argument("--initializer-range", type=float, default=0.02)
-	parser.add_argument("--checkpoint-nth-layer", type=int, default=None)
+	parser.add_argument("--vocab_file", type=str, default="./example_data/bert-base-multilingual-cased-vocab.txt")
+	parser.add_argument("--hidden_size", type=int, default=768)
+	parser.add_argument("--num_hidden_layers", type=int, default=12)
+	parser.add_argument("--num_attention_heads", type=int, default=12)
+	parser.add_argument("--intermediate_size", type=int, default=3072)
+	parser.add_argument("--hidden_act", type=str, default="gelu")
+	parser.add_argument("--hidden_dropout_prob", type=float, default=0.1)
+	parser.add_argument("--attention_dropout_prob", type=float, default=0.1)
+	parser.add_argument("--max_position_embeddings", type=int, default=512)
+	parser.add_argument("--type_vocab_size", type=int, default=16)
+	parser.add_argument("--initializer_range", type=float, default=0.02)
 
 	# training parameters
-	parser.add_argument("--batch-size", type=int, default=32)
-	parser.add_argument("--adversary-batch-size", type=int, default=64)
-	parser.add_argument("--sequence-length", type=int, default=192) # XNLI max sequence length with wordpiece tokenization is 167
-	parser.add_argument("--adversary-repeat", type=int, default=5)
-	parser.add_argument("--learning-rate", type=float, default=1e-4)
-	parser.add_argument("--adversary-loss-weight", type=float, default=1e-4)
-	parser.add_argument("--frobenius-loss-weight", type=float, default=1e-6)
+	parser.add_argument("--batch_size", type=int, default=32)
+	parser.add_argument("--training_step_frequency", type=int, default=1)
+	parser.add_argument("--adversary_batch_size", type=int, default=64)
+	parser.add_argument("--sequence_length", type=int, default=192) # XNLI max sequence length with wordpiece tokenization is 167
+	parser.add_argument("--adversary_repeat", type=int, default=5)
+	parser.add_argument("--learning_rate", type=float, default=1e-4)
+	parser.add_argument("--adversary_loss_weight", type=float, default=1e-4)
+	parser.add_argument("--frobenius_loss_weight", type=float, default=1e-6)
 	parser.add_argument("--epochs", type=int, default=1000)
 
 	# checkpoint parameters
-	parser.add_argument("--checkpoint-folder", type=str, default="./checkpoints/")
-	parser.add_argument("--restore-checkpoint", action="store_true")
-	parser.add_argument("--checkpoint-frequency", type=int, default=10)
+	parser.add_argument("--checkpoint_folder", type=str, default="./checkpoints/")
+	parser.add_argument("--restore_checkpoint", action="store_true")
+	parser.add_argument("--checkpoint_frequency", type=int, default=10)
 
 	# hardware parameters
-	parser.add_argument("--max-device-batch-size", type=int, default=None)
-	parser.add_argument("--training-step-frequency", type=int, default=None)
-	parser.add_argument("--enable-cuda", action="store_true")
-	parser.add_argument("--distributed", action="store_true")
-	parser.add_argument("--batch-workers", type=int, default=0)
-	parser.add_argument("--adversary-workers", type=int, default=0)
-	parser.add_argument("--local_rank", type=int, default=0)
+	parser.add_argument("--enable_cuda", action="store_true")
+	parser.add_argument("--batch_workers", type=int, default=0)
+	parser.add_argument("--adversary_workers", type=int, default=0)
+	parser.add_argument("--local_rank", type=int, default=False)
 
 	# debugging
 	parser.add_argument("--debug", action="store_true")
 
 	args = parser.parse_args()
 
-	args.world_size = torch.cuda.device_count() if args.distributed else 1
-	if args.max_device_batch_size is None:
-		args.max_device_batch_size = args.batch_size
-	if args.training_step_frequency is None:
-		args.training_step_frequency = max(1, args.batch_size // (args.max_device_batch_size * args.world_size))
+	args.world_size = torch.cuda.device_count() if args.local_rank else 1
 
-	if args.distributed:
+	pdb.set_trace()
+	if args.local_rank:
 		torch.cuda.set_device(args.local_rank)
 		dist.init_process_group(backend='nccl', rank=args.local_rank)
+		torch.manual_seed(80085) # make sure all weight initializations are the same
+		print("Started process %d" % args.local_rank)
 
 	# initialize model and trainer configurations
 	ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
@@ -85,7 +82,6 @@ if __name__ == '__main__':
 	    max_position_embeddings=args.max_position_embeddings,
 	    type_vocab_size=args.type_vocab_size,
 	    initializer_range=args.initializer_range,
-	    checkpoint_every=args.checkpoint_nth_layer
 	)
 
 	trainer_config = AdversarialPretrainerConfig(
@@ -121,7 +117,7 @@ if __name__ == '__main__':
 	test_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length))
 			for language, file_path in test_files]
 
-	if args.distributed:
+	if args.local_rank:
 		train_raw = [(language, dataset, DistributedSampler(dataset, num_replicas=args.world_size, rank=args.local_rank))
 					for language, dataset in train_raw]
 		adversary_sampler = DistributedSampler(adversary_raw)
@@ -145,7 +141,7 @@ if __name__ == '__main__':
 			for language, dataset, sampler in test_raw}
 
 	# initialize model and trainer
-	trainer_class = DistributedAdversarialPretrainer if args.distributed else AdversarialPretrainer
+	trainer_class = DistributedAdversarialPretrainer if args.local_rank else AdversarialPretrainer
 	loss_log = path.join(args.checkpoint_folder, "loss.tsv")
 	print("initializing model")
 	try:
@@ -168,10 +164,10 @@ if __name__ == '__main__':
 
 		# try restoring from checkpoint
 		trainer, start = trainer_class.load_checkpoint(os.path.join(args.checkpoint_folder, 'checkpoint.state'),
-				MultilingualBert, train_data, test_data, verbose=args.local_rank == 0)
+				MultilingualBert, train_data, test_data, verbose=not args.locak_rank)
 	except FileNotFoundError:
 		model = MultilingualBert(model_config)
-		trainer = trainer_class(model, trainer_config, train_data, test_data, verbose=args.local_rank == 0)
+		trainer = trainer_class(model, trainer_config, train_data, test_data, verbose=not args.local_rank, seed=420)
 		start = 0
 		best_epoch = 0
 		best_loss = 1e9

@@ -9,7 +9,7 @@
 \usepackage{lipsum}
 \usepackage{multicol}
 
-\title{Adversarial Cross-lingual Context Vectors}
+\title{Adversarial Cross-lingual Language Models}
 \author{Nicholas Farn}
 \date{\today}
 
@@ -21,46 +21,57 @@ Write after everything else
 
 \begin{multicols}{2}
 \section{Introduction}
-Many natural language processing tasks make use of pre-trained models such as word-embeddings \cite{}.  Such pre-trained models often create a representation of words, characters, or sentences that impart some meaning in relation to other words, characters, or sentences within the same language.  Recently, such models have shown vast improvement beyond state-of-the-art through unsupervised training of deep language models \cite{BERT, OpenAI, ELMo}.  However, an inherent limitation is that a unique model must be trained for each unique language used in a downstream application.  Due to the large data required in order to train these models, their performance naturally suffers on lower resource languages such as Swahili or Urdu.  
+Many natural language processing tasks commonly make use of pre-trained models, such as word embeddings, to much success \cite{}.  Such pre-trained models often create a vector representation of words that impart some meaning in relation to vector representations of other words within the same language.  Recently, such models have shown great improvement beyond state-of-the-art through unsupervised training of deep language models \cite{bert, openai, elmo}.  These generate word embeddings altered to take in the surrounding context of the sentence it is in.  However, most models training tasks are designed to model a single language, and thus similar words and sentences in different languages can have vastly different representations.  Aligning sentences using bilingual corpora can take a vast amount of samples.  This is on top of the many samples needed in order to produce good representations in a given language.  For lower resource languages such as Swahili or Urdu, this can pose a problem.  
 
-Representation is not aligned between languages
+There has been previous success in jointly training multiple tasks with similar tasks on a single model.
 
-Short description of solution and logic behind solution
-
-\section{Previous Work}
-Describe previous language models
-
-Describe previous types of attempt at aligning language models
-
-Describe previous usage of shared-private models and how it is novel and differs
-from other attempts
+\section{Related Work}
+Facebook stop stealing my research :P
 
 \section{Model}
-The cross-lingual model consists of using a transformer architecture on the shared-private multi-task model architecture like in Chen et al.  This consists of a shared transformer for every language along with private transformers for each individual language.
+Like previous models, the adversarial crosslingual language model (AXLM) operates by producing word embeddings for each token in an input sentence or sequence of sentences \cite{bert, openai, elmo, xlm}.  Word embeddings are produced for a specific input language by concatenating the outputs of two language models, one shared between all languages and one unique to the input language.  Given $L$ languages, such a model ends up jointly training $L+1$ language models.  This multi-task set-up is commonly referred to as a shared-private encoder \cite{Chen16}.  The goal of using such an architecture is to leverage data for higher resource languages to learn useful features for lower resource languages.  The model is split into shared and private components in order to prevent competition for model parameters between languages.  An adversarial component is added in order to encourage similar representation between languages as well.
 
-The BERT model implementation is taken from a repository verified to reproduce the same results as the original paper.  Additional fragments of code such as the vocab class are taken from another repository implementing BERT.
-
-I implemented the shared-private model, which encapsulates a BERT transformer model and outputs context vectors for a specific language given input token ids.  Tokens across languages are shared in a single multilingual vocabulary.
+% image showing example of network
 
 \subsection{Language Model}
-Description of language models chosen and baseline model architecture and loss
+AXLM uses a transformer architecture on the shared-private architecture.  The transformer is trained on monolingual data using the same input and prediction tasks as BERT.  Input to BERT consists of first tokenizing sentences using WordPiece tokenization, the prepending and appending a [CLS] and [SEP] token to the sentence respectively.  BERT training consists of two tasks prediction:
+
+\begin{itemize}
+	\item Masked token prediction.  Given a sequence of tokens, $(t_1, t_2, t_3, \dots)$, a given token, $t_i$, is chosen to be replaced with a special ``mask'' token with a probability of 15\%.  The language model is then trained to predict the masked word.  Since the mask token is never seen in downstream tasks, it is replaced with a random word 10\% of the time, the original word is kept another 10\% of the time, and the mask token is used for the remaining 80\%.
+
+	\item Next sentence prediction.  The model is given two sentences which are concatenated together.  50\% of the time, the second sentence is an actual sentence which follows the first.  The other 50\% it is a sentence randomly drawn from the corpus.  In order to aid the language model, the sentences are separated by a [SEP] token.  Each sentence is also given a special segment embedding, with each token in the first sentence given a first sentence segment embedding and each token in the second receiving a corresponding second sentence segment embedding.
+\end{itemize}
+
+During training the loss from each task is simply added together.  In addition to segment embeddings, BERT also makes use of positional and multilingual Word-piece embeddings \cite{}.  For AXLM, these embeddings are shared between all private and shared components.
+
+% picture of embedding setup
 
 \subsection{Shared-Private Model}
-Description of shared-private model architecture and loss
+In addition to the loss from BERT's prediction tasks, AXLM is also subjected to an adversarial and Frobenius loss.  Since the shared language model is the same for all languages, it is encouraged to learn language agnostic.  This is accomplished by training an adversarial discriminator to predict the language an input sentence belongs.  The discriminator is defined as a simple prediction layer which is fed the pooled output of the shared model.
 
-I also implemented a potential pretraining algorithm which consists of training an adversary to recognize the language an output representation belongs to, then performing a modified version of BERT’s prediction tasks for each language.
+$$D(x_{pooled}) = softmax(W x_{pooled} + b)$$
 
-BERT’s pre-training consists of two tasks: predicting the correct token for randomly masked tokens in a sequence and predicting whether a given sentence follows a given sentence.  The first task is generated by having a probability of a masked token either being masked, replaced with a random token, or kept the same.  I modified the algorithm to include a probability of replacing a given token with a context equivalent token in another language. This should hopefully encourage similar representations across different languages though I do not currently have empirical evidence.  This also requires the use of token-aligned parallel corpus.
+The shared language model is then trained to confuse the discriminator.
 
-Each language specific model is also trained to confuse an adversary while also minimizing the squared frobenius loss between its shared and private vectors.  Thus the total loss is a combination of the prediction loss from BERT’s tasks plus the adversary’s prediction loss and frobenius loss.  The latter two losses are weighted through the beta and gamma hyperparameters.
+$$\mathcal{L}_{adv} = \min_\theta \left( \max_\theta ( \sum_{k=1}^K \sum_{i=1}^N d_i^k \log [D(E(s))] ) \right)$$
 
-$language_loss = mask_loss + is_next_loss + beta * adversary_loss + gamma * frobenius_loss$
+Where $E$ and $D$ refer to the AXLM encoder and discriminator respectively.  In order to encourage each language's private models to learn language specific features, the squared Frobenius loss is taken between the output vectors of a language's private and shared components.
+
+$$\mathcal{L}_{diff} = \sum_{k=1}^K \lVert {H_s^k}^T H_p^k \rVert_F^2$$
+
+This penalizes the shared and private components for learning features which are not orthogonal to one another.  The final resultant loss is a weighted combination of the training task, adversarial, and squared Frobenius loss.
+
+$$\mathcal{L} = \mathcal{L}_{mask} + \mathcal{L}_{next} + \beta \mathcal{L}_{adv} + \gamma \mathcal{L}_{diff}$$
+
+Where $\beta$ and $\gamma$ are hand-tuned hyperparameters.  These are chosen to be in the range of 1e-2 to 1e-6.
+
+\section{Training}
+Due to the imbalance of monolingual available for different languages, 
 
 \section{Evaluation}
 Like BERT, training data consists of long sequences of sentences drawn from texts such as news articles or books.  Samples sequences are drawn for each language from a set of corpora belonging to the specified language, creating a training set for each language.  If the corpus a sample is drawn from consists of parallel texts, the accompanying translation for a sequence is included in the sample as well.  In addition to drawing samples for each language, samples are drawn from all corpora across all languages in order to create a training set for the adversary.
 
 \subsection{XNLI}
-used model as embeddings in downstream translation application
 
 \subsection{Results}
 

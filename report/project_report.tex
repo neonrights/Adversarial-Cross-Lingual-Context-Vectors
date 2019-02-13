@@ -1,4 +1,4 @@
-\documentclass[10pt,letterpaper]{article}
+\documentclass[10pt,letterpaper,twocolumn]{article}
 \usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
 \usepackage{amsmath}
@@ -7,7 +7,6 @@
 \usepackage{graphicx}
 \usepackage[margin=1in]{geometry}
 \usepackage{lipsum}
-\usepackage{multicol}
 
 \title{Adversarial Cross-lingual Language Models}
 \author{Farn, Nicholas\\
@@ -22,7 +21,6 @@
 Write after everything else
 \end{abstract}
 
-\begin{multicols}{2}
 \section{Introduction}
 Many natural language processing tasks commonly make use of pre-trained models, such as word embeddings, to much success \cite{}.  Such pre-trained models often create a vector representation of words that impart some meaning in relation to vector representations of other words within the same language.  Recently, such models have shown great improvement beyond state-of-the-art through unsupervised training of deep language models \cite{bert, openai, elmo}.  These generate word embeddings altered to take in the surrounding context of the sentence it is in.  However, most models training tasks are designed to model a single language, and thus similar words and sentences in different languages can have vastly different representations.  Aligning sentences using bilingual corpora can take a vast amount of samples.  This is on top of the many samples needed in order to produce good representations in a given language.  For lower resource languages such as Swahili or Urdu, this can pose a problem.  
 
@@ -69,9 +67,9 @@ $$\mathcal{L} = \mathcal{L}_{mask} + \mathcal{L}_{next} + \beta \mathcal{L}_{adv
 Where $\beta$ and $\gamma$ are hand-tuned hyperparameters.  These are chosen to be in the range of 1e-2 to 1e-6.
 
 \section{Training}
-AXLM was trained using data drawn from Wikipedia articles and the OpenSubtitles corpus.  In order to generate training samples, long sequences of sentences are randomly sampled from contiguous text from the corpora.  When generating a single batch, samples are drawn from all languages.  A sample is chosen to be from a given language $L$ with probability $\Pr\{L\}$, total samples from $L$ out of all samples, downsampled by some factor $F$ which is then normalized.  When $F < 1$, this results in higher resource languages being downsampled, giving more attention to lower resource languages.  There is a uniform probability of drawing a sample from a given language in order to ensure all samples are seen \cite{}.
+AXLM was trained using data drawn from Wikipedia articles using WikiExtractor\footnote{https://github.com/attardi/wikiextractor} and the OpenSubtitles corpus available on OPUS\footnote{http://opus.nlpl.eu/}.  In order to generate training samples, long sequences of sentences are randomly sampled from contiguous text from the corpora.  When generating a single batch, samples are drawn from all languages.  A sample is chosen to be from a given language $L$ with probability $\Pr\{L\}$, total samples from $L$ out of all samples, downsampled by some factor $F$ which is then normalized.  When $F < 1$, this results in higher resource languages being downsampled, giving more attention to lower resource languages.  There is a uniform probability of drawing a sample from a given language in order to ensure all samples are seen \cite{}.
 
-Before training the shared and private language models, the discriminator is first trained for several iterations in order to provide a more robust adversary.  More details about implementation specifics can be viewed in the appendix.  Due to a lack of resources, each language model was initialized using the weights from a pretrained multilingual BERT \cite{}.
+Before training the shared and private language models, the discriminator is first trained for several iterations in order to provide a more robust adversary.  More details about implementation specifics can be viewed in the appendix.  Due to a lack of resources, each language model was initialized using the weights from a pretrained pytorch implementation of multilingual BERT\footnote{https://github.com/huggingface/pytorch-pretrained-BERT}\footnote{https://github.com/codertimo/BERT-pytorch}.
 
 \section{Evaluation}
 After pretraining, AXLM was tuned for a translation task.  Its performance is evaluated through the use of the XNLI dataset \cite{}.  Due to the larger number of parameters available to AXLM compared to other competing crosslingual language models, the shared language model was separated and its performance evaluated by itself as well.  Several smaller models were also developed to provide guidance on the choice of setting $\beta$ and $\gamma$, whose results will be discussed.
@@ -88,5 +86,4 @@ After pretraining, AXLM was tuned for a translation task.  Its performance is ev
 pseudo-code for training and fine-tuning algorithms
 details of data generation and sampling
 details of devices used and time/epochs taken to train
-\end{multicols}
 \end{document}

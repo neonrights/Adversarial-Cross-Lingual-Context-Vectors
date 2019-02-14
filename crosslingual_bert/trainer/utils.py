@@ -7,32 +7,44 @@ class SmoothedRandomSampler:
     """
     def __init__(self, datasets, factor=0.7, seed=None):
         self.datasets = datasets
+        self.factor = factor
+
         probs = {key: len(value)**factor for key, value in datasets.items()}
         total = sum(probs.values())
         self.probs = {name: prob / total for name, prob in probs.items()}
         min_name = min(datasets, key=lambda name: len(datasets[name]))
         self.length = int(len(datasets[min_name]) / self.probs[min_name])
-        if seed is not None:
-            random.seed(seed)
+        self.seed = seed
 
     def __len__(self):
         return self.length
 
     def __iter__(self):
-        datasets = list(self.datasets)
-        iter_data = {key: iter(value) for key, value in self.datasets.items()}
-        for _ in range(self.length):
-            sample = None
-            while sample is None:
-                assert datasets, "out of samples"
-                name, = random.choices(datasets,
-                        weights=[self.probs[name] for name in datasets])
-                try:
-                    sample = next(iter_data[name])
-                    yield name, sample
-                except StopIteration:
-                    # remove empty dataset from candidates
-                    datasets.remove(name)
+        # pre-calculate language used in each batch
+        language_sequence = [0] * self.length
+        sample_counts = {key: len(value) for key, value in self.datasets.items()}
+        if self.seed is not None:
+            random.seed(self.seed)
+
+        for i in range(self.length):
+            ratios = [(key, value ** self.factor) for key, value in sample_counts.items() if value > 0]
+            assert ratios, "out of samples"
+            normalizer = sum(pair[1] for pair in ratios)
+            ratios = [(key, value / normalizer) for key, value in ratios]
+            
+            r = random.random()
+            for language, prob in ratios:
+                if r < prob:
+                    sample_counts[language] -= 1
+                    language_sequence[i] = language
+                    break
+                r -= prob
+
+        print(language_sequence)
+        # generate batches as determined beforehand
+        dataset_iters = {key: iter(value) for key, value in self.datasets.items()}
+        for language in language_sequence:
+            yield language, next(dataset_iters[language])
 
 
 class SequentialSampler:

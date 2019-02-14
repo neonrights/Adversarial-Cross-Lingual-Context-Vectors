@@ -1,4 +1,5 @@
 import os
+import copy
 import json
 import six
 import torch
@@ -7,7 +8,7 @@ import torch.nn as nn
 from itertools import chain
 from torch.optim import Adam, SGD
 from torch.utils.data import DataLoader
-from torch.nn.parallel import DistributedDataParallel
+from apex.parallel import DistributedDataParallel
 
 from .optimization import BertAdam
 from .utils import *
@@ -184,7 +185,7 @@ class AdversarialBertWrapper(nn.Module):
 class AdversarialPretrainer:
     """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
-    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, verbose=True, seed=None):
+    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, position=None, seed=None):
         """
         :param multilingual_model: a multilingual sequence model which you want to train
         :param config: config of trainer containing parameters and total word vocab size
@@ -204,8 +205,7 @@ class AdversarialPretrainer:
         parallelize = cuda_condition and torch.cuda.device_count() > 1
         self.model.to(self.device)
         if parallelize:
-            if verbose:
-                print("Using %d GPUS for training" % torch.cuda.device_count())
+            print("Using %d GPUS for training" % torch.cuda.device_count())
             gpu_ids = list(range(torch.cuda.device_count()))
             self.model = nn.DataParallel(self.model).to(self.device)
 
@@ -232,7 +232,7 @@ class AdversarialPretrainer:
         self.train_freq = config.train_freq if config.train_freq is not None else 1
 
         self._config = config # for checkpointing
-        self.verbose = verbose
+        self.position = position
         self.seed = seed
 
     def train(self, epoch):
@@ -263,7 +263,7 @@ class AdversarialPretrainer:
                 D_iter = tqdm.tqdm(enumerate(data["adversary"]),
                         desc="D_train:{}:{}/{}".format(epoch, repeat+1, self.D_repeat),
                         total=len(data["adversary"]),
-                        disable=not self.verbose)
+                        position=self.position)
 
                 total_loss = 0
                 total_correct = 0
@@ -271,6 +271,7 @@ class AdversarialPretrainer:
                 for i, batch in D_iter:
                     batch = {key: value.to(self.device) for key, value in batch.items()}
                     loss, logits = self.model.forward("adversary", **batch)
+                    loss = loss.mean()
 
                     total_loss += loss.item()
                     total_correct += logits.argmax(-1).eq(batch['language_labels']).sum().item()
@@ -281,20 +282,20 @@ class AdversarialPretrainer:
                         loss.backward()
                         self.D_optim.step()
                 
-                if self.verbose:
-                    print("loss={0:.6f} acc={1:.6f}".format(
-                            total_loss / len(D_iter), total_correct / total_elements))
+                print("loss={0:.6f} acc={1:.6f}".format(
+                        total_loss / len(D_iter), total_correct / total_elements))
 
         micro_loss = 0
         if train:
-            language_iter = SmoothedRandomSampler({language: data[language] for language in self.ltoi}, seed=self.seed)
+            seed = self.seed * epoch if self.seed is not None else None
+            language_iter = SmoothedRandomSampler({language: data[language] for language in self.ltoi}, seed=seed)
         else:
             language_iter = SequentialSampler({language: data[language] for language in self.ltoi})
 
         language_iter = tqdm.tqdm(enumerate(language_iter),
                 desc="{}:{}".format(str_code, epoch),
                 total=len(language_iter),
-                disable=not self.verbose)
+                position=self.position)
 
         total_mask_loss = 0.
         total_next_loss = 0.
@@ -306,7 +307,7 @@ class AdversarialPretrainer:
         total_next_acc = 0.
         for i, (language, batch) in language_iter:
             # accumulate gradients if necessary
-            if train and i & self.train_freq == 0:
+            if train and i % self.train_freq == 0:
                 self.lm_optims.zero_grad()
 
             # compute losses for each subbatch
@@ -317,14 +318,14 @@ class AdversarialPretrainer:
             # compute losses, sum if parallelized
             mask_loss, next_loss, adv_loss, diff_loss, mask_acc, next_acc = self.model(language, **batch)
             loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss
+            loss = loss.mean()
 
             if train:
                 # average loss over accumulation and GPUs
-                loss = loss.sum()
                 loss.backward()
 
-            mask_loss, next_loss, adv_loss, diff_loss, mask_acc, next_acc =\
-                    mask_loss.mean(), next_loss.mean(), adv_loss.mean(), diff_loss.mean(), mask_acc.mean(), next_acc.mean()
+            loss, mask_loss, next_loss, adv_loss, diff_loss, mask_acc, next_acc =\
+                    loss.mean(), mask_loss.mean(), next_loss.mean(), adv_loss.mean(), diff_loss.mean(), mask_acc.mean(), next_acc.mean()
 
             # record loss and accuracy statistics
             total_loss += loss.item()
@@ -339,7 +340,7 @@ class AdversarialPretrainer:
             total_mask_acc += mask_acc.item()
             total_next_acc += next_acc.item()
 
-            if train and (i+1) % self.train_freq == 0:
+            if train and (i + 1) % self.train_freq == 0:
                 self.lm_optims.step()
 
         # calculate avg loss and accuracy
@@ -352,9 +353,8 @@ class AdversarialPretrainer:
         avg_mask_acc = total_mask_acc / total_batches
         avg_next_acc = total_next_acc / total_batches
 
-        if self.verbose:
-            print("EP{0}_{1}_{2}:\nmask={3:.6f}\tnext={4:.6f}\tadv={5:.6f}\ndiff={6:.6f}\tmask_acc={7:.6f}\tnext_acc={8:.6f}".format(
-                    epoch, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_mask_acc, avg_next_acc))
+        print("EP{0}_{1}_{2}:\nmask={3:.6f}\tnext={4:.6f}\tadv={5:.6f}\ndiff={6:.6f}\tmask_acc={7:.6f}\tnext_acc={8:.6f}".format(
+                epoch, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_mask_acc, avg_next_acc))
 
         return avg_loss
 
@@ -394,7 +394,7 @@ class AdversarialPretrainer:
 
 
     @classmethod
-    def load_checkpoint(cls, save_path, arch, train_data, test_data=None, verbose=True):
+    def load_checkpoint(cls, save_path, arch, train_data, test_data=None):
         """loading a saved training and model state
         """
         save_state = torch.load(save_path)
@@ -405,7 +405,7 @@ class AdversarialPretrainer:
 
         # initialize new trainer
         model = arch(save_state['config'])
-        trainer = cls(model, save_state['config'], train_data, test_data, verbose)
+        trainer = cls(model, save_state['config'], train_data, test_data)
         trainer.model.load_state_dict(save_state['model'])
         
         # restore optimer states
@@ -418,7 +418,7 @@ class AdversarialPretrainer:
 class DistributedAdversarialPretrainer(AdversarialPretrainer):
     """Adversarial pre-training on crosslingual BERT model for a set of languages
     """
-    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, verbose=True, seed=None):
+    def __init__(self, multilingual_model, config: AdversarialPretrainerConfig, train_data, test_data=None, position=None, seed=None):
         """
         :param multilingual_model: a multilingual sequence model which you want to train
         :param config: config of trainer containing parameters and total word vocab size
@@ -434,11 +434,8 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self.model = AdversarialBertWrapper(multilingual_model, config)
 
         # move to GPU
-        print("moving model to GPU")
         self.model.to(self.device)
-        print("moved model to GPU")
-        self.model = DistributedDataParallel(self.model, device_ids=[config.gpu_id])
-        print("set up distributed model")
+        self.model = DistributedDataParallel(self.model, delay_allreduce=True)
 
         # assign data
         self.train_data = train_data
@@ -459,6 +456,6 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self.train_freq = config.train_freq if config.train_freq is not None else 1
 
         self._config = config # for checkpointing
-        self.verbose = verbose
+        self.position = position
         self.seed = seed
 

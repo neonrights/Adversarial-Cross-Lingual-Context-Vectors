@@ -116,11 +116,11 @@ if __name__ == '__main__':
             for language, file_path in test_files]
 
     if args.local_rank is not None:
-        train_raw = [(language, dataset, DistributedSampler(dataset, num_replicas=args.world_size, rank=args.local_rank))
+        train_raw = [(language, dataset, DistributedSampler(dataset))
                     for language, dataset in train_raw]
         adversary_sampler = DistributedSampler(adversary_raw)
 
-        test_raw = [(language, dataset, DistributedSampler(dataset, num_replicas=args.world_size, rank=args.local_rank))
+        test_raw = [(language, dataset, DistributedSampler(dataset))
                     for language, dataset in test_raw]
     else:
         train_raw = [(language, dataset, None) for language, dataset in train_raw]
@@ -137,6 +137,9 @@ if __name__ == '__main__':
     test_data = {language: DataLoader(dataset, batch_size=args.batch_size, sampler=sampler,
                     num_workers=args.batch_workers, drop_last=True, pin_memory=args.enable_cuda)
             for language, dataset, sampler in test_raw}
+
+    print({key: len(value) for key, value in train_data.items()})
+    print({key: len(value) for key, value in test_data.items()})
 
     # initialize model and trainer
     trainer_class = DistributedAdversarialPretrainer if args.local_rank is not None else AdversarialPretrainer

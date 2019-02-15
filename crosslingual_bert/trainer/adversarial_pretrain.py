@@ -218,10 +218,10 @@ class AdversarialPretrainer:
 
         # initialize optimizers
         if parallelize:
-            self.D_optim = Adam(self.model.module.component_parameters("adversary"), config.lr)
+            self.D_optim = SGD(self.model.module.component_parameters("adversary"), config.lr)
             self.lm_optims = BertAdam(self.model.module.component_parameters(), config.lr)
         else:
-            self.D_optim = Adam(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
+            self.D_optim = SGD(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
             self.lm_optims = BertAdam(self.model.component_parameters(), config.lr)
 
         # hyperparameters for loss
@@ -381,10 +381,15 @@ class AdversarialPretrainer:
         with open(os.path.join(directory_path, "config.json"), 'w+') as f:
             f.write(self._config.to_json_string())
 
+        if isinstance(self.model, (DataParallel, DistributedDataParallel)):
+            model_state = self.model.module.state_dict()
+        else:
+            model_state = self.model.state_dict()
+
         # store optimizer state and model
         current_state = {
             'epoch': epoch,
-            'model': self.model.state_dict(),
+            'model': model_state,
             'optimizer': self.lm_optims.state_dict(),
             'adv_optim': self.D_optim.state_dict()
         }
@@ -445,8 +450,8 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self.D_repeat = config.adv_repeat
 
         # initialize optimizers
-        self.D_optim = Adam(self.model.module.component_parameters("adversary"), config.lr) # adversary optimizer
-        self.lm_optims = BertAdam(self.model.module.component_parameters(), config.lr)
+        self.D_optim = SGD(self.model.module.component_parameters("adversary"), config.lr) # adversary optimizer
+        self.lm_optims = SGD(self.model.module.component_parameters(), config.lr)
         
         # hyperparameters for loss
         self.beta = config.beta

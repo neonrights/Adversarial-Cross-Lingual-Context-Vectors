@@ -26,8 +26,8 @@ class MultilingualBert(nn.Module):
 	"""
 	def __init__(self, config: MultilingualConfig):
 		super().__init__()
-		self.shared = NoEmbedBert(config)
 		self.embeddings = BERTEmbeddings(config)
+		self.shared = NoEmbedBert(config)
 		self.private = nn.ModuleDict({language: NoEmbedBert(config)
 				for language in config.languages})
 

@@ -71,6 +71,8 @@ AXLM was trained using data drawn from Wikipedia articles using WikiExtractor\fo
 
 Before training the shared and private language models, the discriminator is first trained for several iterations in order to provide a more robust adversary.  More details about implementation specifics can be viewed in the appendix.  Due to a lack of resources, each language model was initialized using the weights from a pretrained pytorch implementation of multilingual BERT\footnote{https://github.com/huggingface/pytorch-pretrained-BERT}\footnote{https://github.com/codertimo/BERT-pytorch}.
 
+Due to the already large size of BERT, AXLM is even larger, and grows linearly in size with number of languages considered.  However, this is not a problem during forward and backward propagation since only the shared and a single private language model are used at a time.  However, depending on the optimizer used, the linear increase in weights can lead to hefty memory costs when using optimizers such as Adam which uses twice as much memory as the model weights.  For this reason Adafactor was used instead \cite{}.  Best settings used during optimization.  Any kind of corrections used as well.
+
 \section{Evaluation}
 After pretraining, AXLM was tuned for a translation task.  Its performance is evaluated through the use of the XNLI dataset \cite{}.  Due to the larger number of parameters available to AXLM compared to other competing crosslingual language models, the shared language model was separated and its performance evaluated by itself as well.  Several smaller models were also developed to provide guidance on the choice of setting $\beta$ and $\gamma$, whose results will be discussed.
 

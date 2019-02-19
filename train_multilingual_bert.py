@@ -6,11 +6,11 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from torch.utils.data import DataLoader, DistributedSampler
+from pytorch_pretrained_bert import BertTokenizer
 
-from crosslingual_bert.dataset import BertTokenizer, LanguageDataset, DiscriminatorDataset
+from crosslingual_bert.dataset import LanguageDataset, DiscriminatorDataset
 from crosslingual_bert.model import MultilingualBert, MultilingualConfig
 from crosslingual_bert.trainer import AdversarialPretrainer, DistributedAdversarialPretrainer, AdversarialPretrainerConfig
-import pdb
 
 
 if __name__ == '__main__':

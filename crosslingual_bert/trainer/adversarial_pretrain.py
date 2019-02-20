@@ -14,6 +14,7 @@ from .optimization import *
 from .utils import *
 
 import tqdm
+import pdb
 
 
 class AdversarialPretrainerConfig(object):
@@ -76,6 +77,7 @@ class NextSentencePrediction(nn.Module):
         super().__init__()
         self.linear = nn.Linear(hidden, 2)
         self.softmax = nn.LogSoftmax(dim=-1)
+        torch.nn.init.xavier_uniform_(self.linear.weight)
 
     def forward(self, x):
         return self.softmax(self.linear(x))
@@ -94,6 +96,7 @@ class MaskedLanguageModel(nn.Module):
         super().__init__()
         self.linear = nn.Linear(hidden, vocab_size)
         self.softmax = nn.LogSoftmax(dim=-1)
+        torch.nn.init.xavier_uniform_(self.linear.weight)
 
     def forward(self, x):
         return self.softmax(self.linear(x))
@@ -106,6 +109,7 @@ class SimpleAdversary(nn.Module):
         super().__init__()
         self.linear = nn.Linear(hidden_size, language_size)
         self.softmax = nn.LogSoftmax(dim=-1)
+        torch.nn.init.xavier_uniform_(self.linear.weight)
 
     def forward(self, inputs):
         return self.softmax(self.linear(inputs))
@@ -382,7 +386,7 @@ class AdversarialPretrainer:
         with open(os.path.join(directory_path, "config.json"), 'w+') as f:
             f.write(self._config.to_json_string())
 
-        if isinstance(self.model, (DataParallel, DistributedDataParallel)):
+        if isinstance(self.model, (nn.DataParallel, DistributedDataParallel)):
             model_state = self.model.module.state_dict()
         else:
             model_state = self.model.state_dict()

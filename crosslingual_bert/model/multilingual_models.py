@@ -71,25 +71,19 @@ class MultilingualBert(nn.Module):
         config.languages = languages
         model = cls(config)
 
-        embedding_state = model.embeddings.state_dict()
-        for key in embedding_state:
-            assert embedding_state[key].shape == pretrained_state["embeddings.%s" % key].shape
-            embedding_state[key].data.copy_(pretrained_state["embeddings.%s" % key])
-        model.embeddings.load_state_dict(embedding_state)
+        bert_state = model.state_dict().copy()
+        for key in bert_state:
+            if key.startswith('embeddings.'):
+                new_key = key
+            elif key.startswith('shared.'):
+                new_key = '.'.join(key.split('.')[1:])
+            elif key.startswith('private.'):
+                new_key = '.'.join(key.split('.')[2:])
+            else:
+                raise ValueError("missing key corresponding to %s" % key)
+            bert_state[key] = pretrained_state[new_key]
 
-        shared_state = model.shared.state_dict()
-        for key in shared_state:
-            assert shared_state[key].shape == pretrained_state[key].shape
-            shared_state[key].data.copy_(pretrained_state[key])
-        model.shared.load_state_dict(shared_state)
-
-        for language in model.private:
-            private_state = model.private[language].state_dict()
-            for key in private_state:
-                assert private_state[key].shape == pretrained_state[key].shape
-                private_state[key].data.copy_(pretrained_state[key])
-            model.private[language].load_state_dict(private_state)
-
+        model.load_state_dict(bert_state)
         return model
 
 

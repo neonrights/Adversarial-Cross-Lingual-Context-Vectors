@@ -67,7 +67,7 @@ class LanguageDataset(Dataset):
         s1_ids = np.hstack((self.tokenizer.vocab['[CLS]'], s1_random, self.tokenizer.vocab['[SEP]']))
         s2_ids = np.hstack((s2_random, self.tokenizer.vocab['[SEP]']))
 
-        segment_label = np.append(np.ones_like(s1_ids), 2*np.ones_like(s2_ids))[:self.max_seq_len]
+        segment_label = np.append(np.zeros_like(s1_ids), np.ones_like(s2_ids))[:self.max_seq_len]
         input_ids = np.append(s1_ids, s2_ids)[:self.max_seq_len]
         token_labels = np.hstack((0, s1_label, 0, s2_label, 0))[:self.max_seq_len]
 

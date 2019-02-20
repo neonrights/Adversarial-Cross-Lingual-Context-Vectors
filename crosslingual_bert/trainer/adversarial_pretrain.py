@@ -143,7 +143,8 @@ class AdversarialBertWrapper(nn.Module):
             language_loss = self.criterion(language_logits, language_labels)
             return language_loss, language_logits
         else:
-            hidden_vectors, pooled_vectors = self.multilingual_model(component, input_ids, segment_label, mask)
+            hidden_vectors, pooled_vectors = self.multilingual_model(component, input_ids,
+                    token_type_ids=segment_label, attention_mask=mask)
         
             # mask prediction loss
             token_logits = self.mask_model(hidden_vectors[-1])
@@ -210,8 +211,6 @@ class AdversarialPretrainer:
             gpu_ids = list(range(torch.cuda.device_count()))
             self.model = nn.DataParallel(self.model).to(self.device)
 
-        pdb.set_trace()
-
         # assign data
         self.train_data = train_data
         self.test_data = test_data if test_data else train_data
@@ -221,11 +220,11 @@ class AdversarialPretrainer:
 
         # initialize optimizers
         if parallelize:
-            self.D_optim = SGD(self.model.module.component_parameters("adversary"), config.lr)
-            self.lm_optims = SGD(self.model.module.component_parameters(), config.lr)
+            self.D_optim = Adafactor(self.model.module.component_parameters("adversary"), config.lr)
+            self.lm_optims = Adafactor(self.model.module.component_parameters(), config.lr)
         else:
-            self.D_optim = SGD(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
-            self.lm_optims = SGD(self.model.component_parameters(), config.lr)
+            self.D_optim = Adafactor(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
+            self.lm_optims = Adafactor(self.model.component_parameters(), config.lr)
 
         # hyperparameters for loss
         self.beta = config.beta

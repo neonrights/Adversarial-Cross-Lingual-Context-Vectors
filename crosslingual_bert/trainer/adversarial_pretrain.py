@@ -8,12 +8,13 @@ import torch.nn as nn
 from itertools import chain
 from torch.optim import *
 from torch.utils.data import DataLoader
-from apex.parallel import DistributedDataParallel
+from torch.nn.parallel import DistributedDataParallel
 
 from .optimization import *
 from .utils import *
 
 import tqdm
+import pdb
 
 
 class AdversarialPretrainerConfig(object):
@@ -209,6 +210,8 @@ class AdversarialPretrainer:
             gpu_ids = list(range(torch.cuda.device_count()))
             self.model = nn.DataParallel(self.model).to(self.device)
 
+        pdb.set_trace()
+
         # assign data
         self.train_data = train_data
         self.test_data = test_data if test_data else train_data
@@ -218,11 +221,11 @@ class AdversarialPretrainer:
 
         # initialize optimizers
         if parallelize:
-            self.D_optim = Adadelta(self.model.module.component_parameters("adversary"), config.lr)
-            self.lm_optims = Adadelta(self.model.module.component_parameters(), config.lr)
+            self.D_optim = SGD(self.model.module.component_parameters("adversary"), config.lr)
+            self.lm_optims = SGD(self.model.module.component_parameters(), config.lr)
         else:
-            self.D_optim = Adadelta(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
-            self.lm_optims = Adadelta(self.model.component_parameters(), config.lr)
+            self.D_optim = SGD(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
+            self.lm_optims = SGD(self.model.component_parameters(), config.lr)
 
         # hyperparameters for loss
         self.beta = config.beta

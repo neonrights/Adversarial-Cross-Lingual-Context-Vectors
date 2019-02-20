@@ -28,6 +28,7 @@ class MultilingualBert(nn.Module):
     """
     def __init__(self, config: MultilingualConfig):
         super().__init__()
+        self.config = config
         self.embeddings = BertEmbeddings(config)
         self.shared = NoEmbeddingBertModel(config)
         self.private = nn.ModuleDict({language: NoEmbeddingBertModel(config)
@@ -35,8 +36,8 @@ class MultilingualBert(nn.Module):
 
         # init embeddings
         #for module in self.embeddings.modules():
-        #	if isinstance(module, nn.Embedding):
-        #		module.weight.data.normal_(mean=0.0, std=config.initializer_range)	
+        #    if isinstance(module, nn.Embedding):
+        #        module.weight.data.normal_(mean=0.0, std=config.initializer_range)    
 
     def forward(self, language, input_ids, token_type_ids=None, attention_mask=None):
         assert language in self.private
@@ -61,28 +62,33 @@ class MultilingualBert(nn.Module):
             self.embeddings.parameters())
 
     @classmethod
-    def from_pretrained(cls, languages, *args, **kwargs):
+    def from_pretrained_bert(cls, languages, *args, **kwargs):
         pretrained_bert = BertModel.from_pretrained(*args, **kwargs)
-        pretrained_state = copy.deepcopy(pretrained_bert.state_dict())
-
-        # split state dict based on embeddings
-        embedding_dict = OrderedDict()
-        embeddingless_bert_dict = OrderedDict()
-        for key, value in pretrained_state.items():
-        	if key.startswith("embeddings."):
-        		embedding_dict[key[11:]] = value
-        	else:
-        		embeddingless_bert_dict[key] = value
+        pretrained_state = pretrained_bert.state_dict()
 
         # convert bert config into multilingual config
         config = copy.deepcopy(pretrained_bert.config)
         config.languages = languages
         model = cls(config)
 
-        model.embeddings.load_state_dict(embedding_dict)
-        model.shared.load_state_dict(embeddingless_bert_dict)
-        for key in model.private:
-            model.private[key].load_state_dict(embeddingless_bert_dict)
+        embedding_state = model.embeddings.state_dict()
+        for key in embedding_state:
+            assert embedding_state[key].shape == pretrained_state["embeddings.%s" % key].shape
+            embedding_state[key].data.copy_(pretrained_state["embeddings.%s" % key])
+        model.embeddings.load_state_dict(embedding_state)
+
+        shared_state = model.shared.state_dict()
+        for key in shared_state:
+            assert shared_state[key].shape == pretrained_state[key].shape
+            shared_state[key].data.copy_(pretrained_state[key])
+        model.shared.load_state_dict(shared_state)
+
+        for language in model.private:
+            private_state = model.private[language].state_dict()
+            for key in private_state:
+                assert private_state[key].shape == pretrained_state[key].shape
+                private_state[key].data.copy_(pretrained_state[key])
+            model.private[language].load_state_dict(private_state)
 
         return model
 

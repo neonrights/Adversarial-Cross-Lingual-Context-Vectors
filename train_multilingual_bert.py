@@ -11,7 +11,7 @@ from pytorch_pretrained_bert import BertTokenizer
 from crosslingual_bert.dataset import LanguageDataset, DiscriminatorDataset
 from crosslingual_bert.model import MultilingualBert, MultilingualConfig
 from crosslingual_bert.trainer import AdversarialPretrainer, DistributedAdversarialPretrainer, AdversarialPretrainerConfig
-import pdb
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

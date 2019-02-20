@@ -8,13 +8,12 @@ import torch.nn as nn
 from itertools import chain
 from torch.optim import *
 from torch.utils.data import DataLoader
-from torch.nn.parallel import DistributedDataParallel
+from apex.parallel import DistributedDataParallel
 
 from .optimization import *
 from .utils import *
 
 import tqdm
-import pdb
 
 
 class AdversarialPretrainerConfig(object):

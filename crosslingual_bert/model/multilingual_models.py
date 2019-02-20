@@ -7,7 +7,6 @@ import torch.nn.functional as F
 
 from pytorch_pretrained_bert import BertConfig, BertEmbeddings, NoEmbeddingBertModel, BertModel
 #from .translator import TranslatorModel
-import pdb
 
 
 class MultilingualConfig(BertConfig):

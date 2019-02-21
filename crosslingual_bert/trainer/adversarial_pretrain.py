@@ -15,6 +15,7 @@ from .utils import *
 
 import tqdm
 import pdb
+import math
 
 
 class AdversarialPretrainerConfig(object):
@@ -171,12 +172,21 @@ class AdversarialBertWrapper(nn.Module):
             # calculate accuracy statistics
             mask_correct = token_logits.argmax(-1).eq(token_labels)
             mask_elements = (token_labels > 0)
-            mask_acc = (mask_correct & mask_elements).sum().double() / mask_elements.sum()
+            mask_correct = (mask_correct & mask_elements).sum()
+            mask_elements = mask_elements.sum()
 
             next_correct = next_logits.argmax(dim=-1).eq(is_next)
             next_acc = next_correct.sum().double() / is_next.nelement()
 
-            return mask_loss, next_loss, adv_loss, diff_loss, mask_acc.detach(), next_acc.detach()
+            return {
+                "mask_loss": mask_loss,
+                "next_loss": next_loss,
+                "adv_loss": adv_loss,
+                "diff_loss": diff_loss,
+                "mask_correct": mask_correct.detach(),
+                "mask_elements": mask_elements.detach(),
+                "next_acc": next_acc.detach()
+            }
 
     def component_parameters(self, component=None):
         if component == 'adversary':
@@ -223,11 +233,11 @@ class AdversarialPretrainer:
 
         # initialize optimizers
         if parallelize:
-            self.D_optim = Adafactor(self.model.module.component_parameters("adversary"), config.lr)
-            self.lm_optims = Adafactor(self.model.module.component_parameters(), config.lr)
+            self.D_optim = Adafactor(self.model.module.component_parameters("adversary"))
+            self.lm_optims = Adafactor(self.model.module.component_parameters())
         else:
-            self.D_optim = Adafactor(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
-            self.lm_optims = Adafactor(self.model.component_parameters(), config.lr)
+            self.D_optim = Adafactor(self.model.component_parameters("adversary")) # adversary optimizer
+            self.lm_optims = Adafactor(self.model.component_parameters())
 
         # hyperparameters for loss
         self.beta = config.beta
@@ -308,7 +318,8 @@ class AdversarialPretrainer:
         total_diff_loss = 0.
         total_loss = 0.
 
-        total_mask_acc = 0.
+        total_mask_correct = 0.
+        total_mask_elements = 0.
         total_next_acc = 0.
         for i, (language, batch) in language_iter:
             # accumulate gradients if necessary
@@ -320,30 +331,29 @@ class AdversarialPretrainer:
                      + torch.zeros(batch['input_ids'].size(0), dtype=torch.long)
             batch = {key: value.to(self.device) for key, value in batch.items()}
 
-            # compute losses, sum if parallelized
-            mask_loss, next_loss, adv_loss, diff_loss, mask_acc, next_acc = self.model(language, **batch)
-            loss = mask_loss + next_loss + self.beta * adv_loss + self.gamma * diff_loss
-            loss = loss.mean()
+            # compute losses, sum/mean if parallelized
+            output = self.model(language, **batch)
+            output = {key: value.mean() if value.dtype is torch.float else value.sum()
+                    for key, value in output.items()}
+            loss = output["mask_loss"] + output["next_loss"] + self.beta * output["adv_loss"] + self.gamma * output["diff_loss"]
 
             if train:
                 # average loss over accumulation and GPUs
                 loss.backward()
 
-            loss, mask_loss, next_loss, adv_loss, diff_loss, mask_acc, next_acc =\
-                    loss.mean(), mask_loss.mean(), next_loss.mean(), adv_loss.mean(), diff_loss.mean(), mask_acc.mean(), next_acc.mean()
-
             # record loss and accuracy statistics
             total_loss += loss.item()
             
             # individual loss statistics
-            total_mask_loss += mask_loss.item()
-            total_next_loss += next_loss.item()
-            total_adv_loss += adv_loss.item()
-            total_diff_loss += diff_loss.item()
+            total_mask_loss += output["mask_loss"].item()
+            total_next_loss += output["next_loss"].item()
+            total_adv_loss += output["adv_loss"].item()
+            total_diff_loss += output["diff_loss"].item()
             
             # batch accuracy statistics
-            total_mask_acc += mask_acc.item()
-            total_next_acc += next_acc.item()
+            total_mask_correct += output["mask_correct"].item()
+            total_mask_elements += output["mask_elements"].item()
+            total_next_acc += output["next_acc"].item()
 
             if train and (i + 1) % self.train_freq == 0:
                 self.lm_optims.step()
@@ -355,8 +365,10 @@ class AdversarialPretrainer:
         avg_next_loss = total_next_loss / total_batches
         avg_adv_loss = self.beta * total_adv_loss / total_batches
         avg_diff_loss = self.gamma * total_diff_loss  / total_batches
-        avg_mask_acc = total_mask_acc / total_batches
+        avg_mask_acc = total_mask_correct / total_mask_elements
         avg_next_acc = total_next_acc / total_batches
+        if math.isnan(avg_mask_acc):
+            pdb.set_trace()
 
         print("EP{0}_{1}_{2}:\nmask={3:.6f}\tnext={4:.6f}\tadv={5:.6f}\ndiff={6:.6f}\tmask_acc={7:.6f}\tnext_acc={8:.6f}".format(
                 epoch, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_mask_acc, avg_next_acc))

@@ -28,7 +28,7 @@ class LanguageDataset(Dataset):
     pytorch dataset that loads training/test dataset for a specific language
     """
     def __init__(self, language, corpus_path, tokenizer, max_seq_len,
-                encoding="utf-8", prob_config=ProbConfig(), position=0):
+                encoding="utf-8", prob_config=ProbConfig(), verbose=False):
         self.language = language
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
@@ -43,7 +43,8 @@ class LanguageDataset(Dataset):
         # walk through directory, determine which files are adequate
         self.file_names = []
         for root, _, files in os.walk(corpus_path):
-            print("scanning %s" % root)
+            if verbose:
+                print("scanning %s" % root)
             for file in files:
                 file_name = path.join(root, file)
                 with open(file_name, 'r', encoding=self.encoding) as f:
@@ -52,7 +53,8 @@ class LanguageDataset(Dataset):
                 if len(sentences) > 1 and (len(sentences[0]) + 2) < self.max_seq_len:
                     self.file_names.append(file_name)
 
-        print("processed %d samples" % len(self.file_names))
+        if verbose:
+            print("processed %d samples" % len(self.file_names))
 
     def __len__(self):
         return len(self.file_names)

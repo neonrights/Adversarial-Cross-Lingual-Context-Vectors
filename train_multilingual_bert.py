@@ -106,17 +106,17 @@ if __name__ == '__main__':
         test_files = [('ar', "./example_data/ar"), ('bg', "./example_data/bg/"),
                 ('de', "./example_data/de/"), ('en', "./example_data/en/")]
     else:
-        train_files = [('ar', "./data/train/ar/"), ('bg', "./data/train/bg/"),
-                ('de', "./data/train/de/"), ('en', "./data/train/en/")]
+        train_files = [('ar', "/mnt/SSD120/wikidata/arwiki/"), ('bg', "/mnt/SSD120/wikidata/bgwiki/"),
+                ('de', "/mnt/SSD120/wikidata/dewiki/"), ('en', "/mnt/SSD120/wikidata/enwiki/")]
         adversary_file = "./data/train/"
         test_files = [('ar', "./data/test/ar"), ('bg', "./data/test/bg/"),
                 ('de', "./data/test/de/"), ('en', "./data/test/en/")]
 
-    train_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length))
+    train_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length, verbose=not args.local_rank))
             for language, file_path in train_files]
-    adversary_raw = DiscriminatorDataset(adversary_file, tokenizer, ltoi, args.sequence_length)
+    adversary_raw = DiscriminatorDataset(adversary_file, tokenizer, ltoi, args.sequence_length, verbose=not args.local_rank)
 
-    test_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length))
+    test_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length, verbose=not args.local_rank))
             for language, file_path in test_files]
 
     if args.local_rank is not None:
@@ -169,7 +169,7 @@ if __name__ == '__main__':
 
         # try restoring from checkpoint
         trainer, start = trainer_class.load_checkpoint(os.path.join(args.checkpoint_folder, 'checkpoint.state'),
-                MultilingualBert, train_data, test_data, verbose=not args.locak_rank)
+                MultilingualBert, train_data, test_data, verbose=not args.local_rank)
     except FileNotFoundError:
         if args.local_rank is not None:
             torch.manual_seed(80085)

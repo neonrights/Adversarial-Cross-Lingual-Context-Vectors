@@ -22,7 +22,7 @@ class DiscriminatorDataset(Dataset):
     assumes all data is kept in a single file, with each line corresponding to a sample
     """
     def __init__(self, corpus_path, tokenizer, language_ids, max_seq_len,
-                encoding="utf-8", corpus_lines=None, position=0):
+                encoding="utf-8", corpus_lines=None, verbose=False):
         self.tokenizer = tokenizer
         self.language_ids = language_ids
         self.max_seq_len = max_seq_len
@@ -38,7 +38,8 @@ class DiscriminatorDataset(Dataset):
                 raise MissingLanguageError
 
             for root, _, files in os.walk(path.join(corpus_path, language)):
-                print("scanning %s" % root)
+                if verbose:
+                    print("scanning %s" % root)
                 for file in files:
                     file_name = path.join(root, file)
                     with open(file_name, 'r', encoding=self.encoding) as f:
@@ -47,7 +48,8 @@ class DiscriminatorDataset(Dataset):
                     if sentences:
                         self.file_names.append((label, file_name))
 
-        print("processed %d samples" % len(self.file_names))
+        if verbose:
+            print("processed %d samples" % len(self.file_names))
 
     def __len__(self):
         return len(self.file_names)

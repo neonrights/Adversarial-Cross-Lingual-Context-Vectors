@@ -14,8 +14,6 @@ from .optimization import *
 from .utils import *
 
 import tqdm
-import pdb
-import math
 
 
 class AdversarialPretrainerConfig(object):
@@ -31,7 +29,8 @@ class AdversarialPretrainerConfig(object):
                 share_file=None,
                 gpu_id=0):
         
-        self.__dict__.update(model_config.__dict__) # add model configuration
+        if model_config is not None:
+            self.__dict__.update(model_config.__dict__) # add model configuration
         self.language_ids = language_ids
         self.adv_repeat = adv_repeat
         self.lr = lr
@@ -416,20 +415,19 @@ class AdversarialPretrainer:
 
 
     @classmethod
-    def load_checkpoint(cls, save_path, arch, train_data, test_data=None):
+    def load_checkpoint(cls, checkpoint_folder, arch, train_data, test_data=None, position=0):
         """loading a saved training and model state
         """
-        save_state = torch.load(save_path)
-        print("Restoring from epoch %d at" % save_state['epoch'], save_path)
+        save_state = torch.load(os.path.join(checkpoint_folder, "checkpoint.state"))
+        print("Restoring from epoch %d from %s" % (save_state['epoch'], checkpoint_folder))
 
-        directory_path, _ = os.path.split(save_state)
-        config = AdversarialPretrainerConfig.from_json_file(os.path.join(directory_path, "config.json"))
+        config = AdversarialPretrainerConfig.from_json_file(os.path.join(checkpoint_folder, "config.json"))
 
         # initialize new trainer
-        model = arch(save_state['config'])
-        trainer = cls(model, save_state['config'], train_data, test_data)
+        model = arch(config)
+        trainer = cls(model, config, train_data, test_data)
         trainer.model.load_state_dict(save_state['model'])
-        
+
         # restore optimer states
         trainer.D_optim.load_state_dict(save_state['adv_optim'])
         trainer.lm_optims.load_state_dict(save_state['optimizer'])

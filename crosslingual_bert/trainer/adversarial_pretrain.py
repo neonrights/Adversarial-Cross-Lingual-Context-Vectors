@@ -398,9 +398,11 @@ class AdversarialPretrainer:
             f.write(self._config.to_json_string())
 
         if isinstance(self.model, (nn.DataParallel, DistributedDataParallel)):
-            model_state = self.model.module.state_dict()
+            model_state = self.model.module.cpu().state_dict()
+            self.model.module.to(self.device)
         else:
-            model_state = self.model.state_dict()
+            model_state = self.model.cpu().state_dict()
+            self.model.to(self.device)
 
         # store optimizer state and model
         current_state = {
@@ -426,7 +428,11 @@ class AdversarialPretrainer:
         # initialize new trainer
         model = arch(config)
         trainer = cls(model, config, train_data, test_data)
-        trainer.model.load_state_dict(save_state['model'])
+        if isinstance(trainer.model, (nn.DataParallel, DistributedDataParallel)):
+            trainer.model.module.load_state_dict(save_state['model'])
+        else:
+            trainer.model.load_state_dict(save_state['model'])
+        trainer.model.to(trainer.device)
 
         # restore optimer states
         trainer.D_optim.load_state_dict(save_state['adv_optim'])

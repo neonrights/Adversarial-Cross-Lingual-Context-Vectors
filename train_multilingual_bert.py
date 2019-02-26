@@ -168,8 +168,8 @@ if __name__ == '__main__':
                 best_loss = test_loss
 
         # try restoring from checkpoint
-        trainer, start = trainer_class.load_checkpoint(os.path.join(args.checkpoint_folder, 'checkpoint.state'),
-                MultilingualBert, train_data, test_data, verbose=not args.local_rank)
+        trainer, start = trainer_class.load_checkpoint(args.checkpoint_folder,
+                MultilingualBert, train_data, test_data, position=args.local_rank)
     except FileNotFoundError:
         if args.local_rank is not None:
             torch.manual_seed(80085)
@@ -196,8 +196,10 @@ if __name__ == '__main__':
         best_epoch = 0
         best_loss = 1e9
 
-    if not os.path.isdir(args.checkpoint_folder):
+    try:
         os.mkdir(args.checkpoint_folder)
+    except FileExistsError:
+        pass
 
     # train model, checkpoint every 10th epoch
     print("starting training")

@@ -147,6 +147,120 @@ class LanguageDataset(Dataset):
         return sample[split:]
 
 
+class LanguageMemoryDataset(Dataset):
+    """
+    pytorch dataset that loads training/test dataset for a specific language
+    """
+    def __init__(self, language, corpus_path, tokenizer, max_seq_len,
+                encoding="utf-8", prob_config=ProbConfig(), verbose=False):
+        self.language = language
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+        
+        self.corpus_path = corpus_path
+        self.encoding = encoding
+
+        self.mask_prob = prob_config.mask_prob
+        self.keep_prob = prob_config.keep_prob
+        self.swap_prob = prob_config.keep_prob + prob_config.swap_prob
+
+        # walk through directory, determine which files are adequate
+        self.samples = []
+        for root, _, files in os.walk(corpus_path):
+            if verbose:
+                print("scanning %s" % root)
+            for file in files:
+                file_name = path.join(root, file)
+                with open(file_name, 'r', encoding=self.encoding) as f:
+                    sentences = f.readlines()
+
+                if len(sentences) > 1 and (len(sentences[0]) + 2) < self.max_seq_len:
+                    sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
+                            for sentence in sentences]
+                    self.samples.append(sentences)
+
+        if verbose:
+            print("processed %d samples" % len(self.samples))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, item):
+        sample = self.samples[item]
+        s1, s2, is_next = self.random_sentences(sample)
+        s1_random, s1_label = self.random_word(s1)
+        s2_random, s2_label = self.random_word(s2)
+
+        # [CLS] tag = SOS tag, [SEP] tag = EOS tag
+        s1_ids = np.hstack((self.tokenizer.vocab['[CLS]'], s1_random, self.tokenizer.vocab['[SEP]']))
+        s2_ids = np.hstack((s2_random, self.tokenizer.vocab['[SEP]']))
+
+        segment_label = np.append(np.zeros_like(s1_ids), np.ones_like(s2_ids))[:self.max_seq_len]
+        input_ids = np.append(s1_ids, s2_ids)[:self.max_seq_len]
+        token_labels = np.hstack((0, s1_label, 0, s2_label, 0))[:self.max_seq_len]
+
+        if self.max_seq_len - len(input_ids) > 0:
+            padding = np.zeros(self.max_seq_len - len(input_ids), dtype=np.long)
+            mask = np.hstack((np.ones_like(input_ids), np.zeros_like(padding)))
+            input_ids = np.append(input_ids, padding)
+            token_labels = np.append(token_labels, padding)
+            segment_label = np.append(segment_label, padding)
+        else:
+            mask = np.ones(self.max_seq_len, dtype=np.long)
+
+        output = {"input_ids": input_ids,
+                  "token_labels": token_labels,
+                  "segment_label": segment_label,
+                  "is_next": is_next,
+                  "mask": mask}
+
+        return {key: torch.tensor(value) for key, value in output.items()}
+
+    def random_word(self, sample):
+        ids = sample.copy()
+        output_label = np.zeros_like(sample)
+
+        for i in range(len(sample)):
+            prob = random.random()
+            if prob < self.mask_prob:
+                prob = random.random()
+                if prob < self.keep_prob: # keep same token
+                    continue
+                elif prob < self.swap_prob: # swap with random (keep in language?)
+                    ids[i] = random.randrange(107, len(self.tokenizer.vocab))
+                else: # swap with mask
+                    ids[i] = self.tokenizer.vocab['[MASK]']
+
+                output_label[i] = sample[i]
+
+        return ids, output_label
+
+    def random_sentences(self, sample):
+        # ensures first section is less than max_seq_len
+        assert len(sample) > 1
+        max_split = 0
+        token_count = 2 # extra two for sos_token and eos_token
+        for sentence in sample:
+            token_count += len(sentence)
+            if token_count >= self.max_seq_len:
+                break
+            max_split += 1
+
+        split = 1 if max_split == 1 else random.randrange(1, max_split)
+        s1 = np.hstack(sample[:split])
+
+        # shorten s1 so it is less than max seq len
+        if random.random() > 0.5:
+            return s1, np.hstack(sample[split:]), 1
+        else:
+            return s1, np.hstack(self.get_random_line()), 0
+
+    def get_random_line(self):
+        sample = random.choice(self.samples)
+        split = 0 if len(sample) == 1 else random.randrange(len(sample)-1)
+        return sample[split:]
+
+
 class LanguageStreamDataset(LanguageDataset):
     """
     pytorch dataset that loads training/test dataset for a specific language

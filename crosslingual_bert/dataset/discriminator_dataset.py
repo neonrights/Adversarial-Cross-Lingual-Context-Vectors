@@ -81,6 +81,65 @@ class DiscriminatorDataset(Dataset):
         return label, np.hstack(sentences[split:])
 
 
+class DiscriminatorMemoryDataset(Dataset):
+    """
+    pytorch dataset that loads training data for model discriminator.
+    assumes all data is kept in a single file, with each line corresponding to a sample
+    """
+    def __init__(self, corpus_path, tokenizer, language_ids, max_seq_len,
+                encoding="utf-8", corpus_lines=None, verbose=False):
+        self.tokenizer = tokenizer
+        self.language_ids = language_ids
+        self.max_seq_len = max_seq_len
+
+        self.corpus_path = corpus_path
+        self.encoding = encoding
+
+        # determine list of file samples
+        self.samples = []
+        for language, label in language_ids.items():
+            language_directory = path.join(corpus_path, language)
+            if not path.isdir(language_directory):
+                raise MissingLanguageError
+
+            for root, _, files in os.walk(path.join(corpus_path, language)):
+                if verbose:
+                    print("scanning %s" % root)
+                for file in files:
+                    file_name = path.join(root, file)
+                    with open(file_name, 'r', encoding=self.encoding) as f:
+                        sentences = f.readlines()
+
+                    if sentences:
+                        sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
+                                for sentence in sentences]
+                        self.samples.append((label, sentences))
+
+        if verbose:
+            print("processed %d samples" % len(self.samples))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, item):
+        label, sentences = self.samples[item]
+        split = 0 if len(sentences) == 1 else random.randrange(len(sentences)-1)
+        input_ids = np.hstack(sentences[split:])
+        input_ids = np.hstack((self.tokenizer.vocab['[CLS]'], input_ids, self.tokenizer.vocab['[SEP]']))[:self.max_seq_len]
+        #assert len(input_ids) > 0
+
+        if self.max_seq_len - len(input_ids) > 0:
+            padding = np.zeros(self.max_seq_len - len(input_ids), dtype=np.long)
+            mask = np.append(np.ones_like(input_ids), np.zeros_like(padding))
+            input_ids = np.append(input_ids, padding)
+        else:
+            mask = np.ones(self.max_seq_len, dtype=np.long)
+
+        return {"input_ids": torch.tensor(input_ids),
+                "language_labels": torch.tensor(label),
+                "mask": torch.tensor(mask)}
+
+
 class DiscriminatorStreamDataset(DiscriminatorDataset):
     """pytorch dataset that loads training data for model discriminator.
     assumes all data is kept in a single file, with each line corresponding to a sample

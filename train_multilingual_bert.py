@@ -8,7 +8,7 @@ import torch.multiprocessing as mp
 from torch.utils.data import DataLoader, DistributedSampler
 
 from pytorch_pretrained_bert import BertTokenizer
-from crosslingual_bert.dataset import LanguageDataset, DiscriminatorDataset
+from crosslingual_bert.dataset import LanguageDataset, LanguageMemoryDataset, DiscriminatorDataset, DiscriminatorMemoryDataset
 from crosslingual_bert.model import MultilingualBert, MultilingualConfig
 from crosslingual_bert.trainer import AdversarialPretrainer, DistributedAdversarialPretrainer, AdversarialPretrainerConfig
 
@@ -47,6 +47,7 @@ if __name__ == '__main__':
     parser.add_argument("--checkpoint_frequency", type=int, default=10)
 
     # hardware parameters
+    parser.add_argument("--on_memory", action="store_true")
     parser.add_argument("--enable_cuda", action="store_true")
     parser.add_argument("--batch_workers", type=int, default=0)
     parser.add_argument("--adversary_workers", type=int, default=0)
@@ -103,20 +104,23 @@ if __name__ == '__main__':
         train_files = [('ar', "./example_data/ar/"), ('bg', "./example_data/bg/"),
                 ('de', "./example_data/de/"), ('en', "./example_data/en/")]
         adversary_file = "./example_data/"
-        test_files = [('ar', "./example_data/ar"), ('bg', "./example_data/bg/"),
+        test_files = [('ar', "./example_data/ar/"), ('bg', "./example_data/bg/"),
                 ('de', "./example_data/de/"), ('en', "./example_data/en/")]
     else:
-        train_files = [('ar', "/mnt/SSD120/wikidata/arwiki/"), ('bg', "/mnt/SSD120/wikidata/bgwiki/"),
-                ('de', "/mnt/SSD120/wikidata/dewiki/"), ('en', "/mnt/SSD120/wikidata/enwiki/")]
-        adversary_file = "./data/train/"
-        test_files = [('ar', "./data/test/ar"), ('bg', "./data/test/bg/"),
-                ('de', "./data/test/de/"), ('en', "./data/test/en/")]
+        train_files = [('ar', "./data/train_/ar/"), ('bg', "./data/train_/bg/"),
+                ('de', "./data/train_/de/"), ('en', "./data/train_/en/")]
+        adversary_file = "./data/train_/"
+        test_files = [('ar', "./data/test_/ar/"), ('bg', "./data/test_/bg/"),
+                ('de', "./data/test_/de/"), ('en', "./data/test_/en/")]
 
-    train_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length, verbose=not args.local_rank))
+    language_class = LanguageMemoryDataset if args.on_memory else LanguageDataset
+    dicriminator_class = DiscriminatorMemoryDataset if args.on_memory else DiscriminatorDataset
+
+    train_raw = [(language, language_class(language, file_path, tokenizer, args.sequence_length, verbose=not args.local_rank))
             for language, file_path in train_files]
-    adversary_raw = DiscriminatorDataset(adversary_file, tokenizer, ltoi, args.sequence_length, verbose=not args.local_rank)
+    adversary_raw = dicriminator_class(adversary_file, tokenizer, ltoi, args.sequence_length, verbose=not args.local_rank)
 
-    test_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length, verbose=not args.local_rank))
+    test_raw = [(language, language_class(language, file_path, tokenizer, args.sequence_length, verbose=not args.local_rank))
             for language, file_path in test_files]
 
     if args.local_rank is not None:

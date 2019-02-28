@@ -39,7 +39,7 @@ if __name__ == '__main__':
     parser.add_argument("--adversary_loss_weight", type=float, default=1e-4)
     parser.add_argument("--frobenius_loss_weight", type=float, default=1e-6)
     parser.add_argument("--epochs", type=int, default=1000)
-    parser.add_argument("--warm_start", action="store_true")
+    parser.add_argument("--pretrained_bert", type=str, default=None)
 
     # checkpoint parameters
     parser.add_argument("--checkpoint_folder", type=str, default="./checkpoints/")
@@ -67,25 +67,30 @@ if __name__ == '__main__':
 
     # initialize model and trainer configurations
     ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
-    if args.warm_start:
-        tokenizer = BertTokenizer.from_pretrained("bert-base-cased")
+    if args.local_rank is not None:
+        torch.manual_seed(80085)
+
+    if args.pretrained_bert:
+        tokenizer = BertTokenizer.from_pretrained(args.pretrained_bert)
+        model = MultilingualBert.from_pretrained_bert(ltoi, args.pretrained_bert)
+        model_config = model.config
     else:
         tokenizer = BertTokenizer(args.vocab_file)
-
-    model_config = MultilingualConfig(
-        languages=ltoi,
-        vocab_size_or_config_json_file=len(tokenizer.vocab),
-        hidden_size=args.hidden_size,
-        num_hidden_layers=args.num_hidden_layers,
-        num_attention_heads=args.num_attention_heads,
-        intermediate_size=args.intermediate_size,
-        hidden_act=args.hidden_act,
-        hidden_dropout_prob=args.hidden_dropout_prob,
-        attention_probs_dropout_prob=args.attention_dropout_prob,
-        max_position_embeddings=args.max_position_embeddings,
-        type_vocab_size=args.type_vocab_size,
-        initializer_range=args.initializer_range,
-    )
+        model_config = MultilingualConfig(
+            languages=ltoi,
+            vocab_size_or_config_json_file=len(tokenizer.vocab),
+            hidden_size=args.hidden_size,
+            num_hidden_layers=args.num_hidden_layers,
+            num_attention_heads=args.num_attention_heads,
+            intermediate_size=args.intermediate_size,
+            hidden_act=args.hidden_act,
+            hidden_dropout_prob=args.hidden_dropout_prob,
+            attention_probs_dropout_prob=args.attention_dropout_prob,
+            max_position_embeddings=args.max_position_embeddings,
+            type_vocab_size=args.type_vocab_size,
+            initializer_range=args.initializer_range,
+        )
+        model = MultilingualBert(model_config)
 
     trainer_config = AdversarialPretrainerConfig(
         model_config=model_config,
@@ -175,26 +180,6 @@ if __name__ == '__main__':
         trainer, start = trainer_class.load_checkpoint(args.checkpoint_folder,
                 MultilingualBert, train_data, test_data, position=args.local_rank)
     except FileNotFoundError:
-        if args.local_rank is not None:
-            torch.manual_seed(80085)
-
-        if args.warm_start:
-            model = MultilingualBert.from_pretrained_bert(ltoi, "bert-base-cased")
-            model_config = model.config
-            trainer_config = AdversarialPretrainerConfig(
-                model_config=model_config,
-                language_ids=ltoi,
-                adv_repeat=args.adversary_repeat,
-                lr=args.learning_rate,
-                beta=args.adversary_loss_weight,
-                gamma=args.frobenius_loss_weight,
-                with_cuda=args.enable_cuda,
-                train_freq=args.train_step,
-                gpu_id=args.local_rank
-            )
-        else:
-            model = MultilingualBert(model_config)
-
         trainer = trainer_class(model, trainer_config, train_data, test_data, position=args.local_rank, seed=420)
         start = 0
         best_epoch = 0

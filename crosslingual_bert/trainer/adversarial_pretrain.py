@@ -366,8 +366,6 @@ class AdversarialPretrainer:
         avg_diff_loss = self.gamma * total_diff_loss  / total_batches
         avg_mask_acc = total_mask_correct / total_mask_elements
         avg_next_acc = total_next_acc / total_batches
-        if math.isnan(avg_mask_acc):
-            pdb.set_trace()
 
         print("EP{0}_{1}_{2}:\nmask={3:.6f}\tnext={4:.6f}\tadv={5:.6f}\ndiff={6:.6f}\tmask_acc={7:.6f}\tnext_acc={8:.6f}".format(
                 epoch, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_mask_acc, avg_next_acc))
@@ -471,8 +469,8 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self.D_repeat = config.adv_repeat
 
         # initialize optimizers
-        self.D_optim = Adafactor(self.model.module.component_parameters("adversary"), config.lr) # adversary optimizer
-        self.lm_optims = Adafactor(self.model.module.component_parameters(), config.lr)
+        self.D_optim = Adafactor(self.model.module.component_parameters("adversary")) # adversary optimizer
+        self.lm_optims = Adafactor(self.model.module.component_parameters())
         
         # hyperparameters for loss
         self.beta = config.beta

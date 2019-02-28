@@ -28,6 +28,7 @@ if __name__ == '__main__':
     parser.add_argument("--max_position_embeddings", type=int, default=512)
     parser.add_argument("--type_vocab_size", type=int, default=16)
     parser.add_argument("--initializer_range", type=float, default=0.02)
+    parser.add_argument("--languages", type=str, nargs='+')
 
     # training parameters
     parser.add_argument("--batch_size", type=int, default=32)
@@ -35,7 +36,7 @@ if __name__ == '__main__':
     parser.add_argument("--adversary_batch_size", type=int, default=64)
     parser.add_argument("--sequence_length", type=int, default=192) # XNLI max sequence length with wordpiece tokenization is 167
     parser.add_argument("--adversary_repeat", type=int, default=5)
-    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument("--adversary_loss_weight", type=float, default=1e-4)
     parser.add_argument("--frobenius_loss_weight", type=float, default=1e-6)
     parser.add_argument("--epochs", type=int, default=1000)
@@ -66,7 +67,7 @@ if __name__ == '__main__':
         print("Started process %d" % args.local_rank)
 
     # initialize model and trainer configurations
-    ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
+    ltoi = {language: index for index, language in enumerate(args.languages)}
     if args.local_rank is not None:
         torch.manual_seed(80085)
 
@@ -112,11 +113,9 @@ if __name__ == '__main__':
         test_files = [('ar', "./example_data/ar/"), ('bg', "./example_data/bg/"),
                 ('de', "./example_data/de/"), ('en', "./example_data/en/")]
     else:
-        train_files = [('ar', "./data/train_/ar/"), ('bg', "./data/train_/bg/"),
-                ('de', "./data/train_/de/"), ('en', "./data/train_/en/")]
+        train_files = [(language, "./data/train_/%s/" % language) for language in args.languages]
         adversary_file = "./data/train_/"
-        test_files = [('ar', "./data/test_/ar/"), ('bg', "./data/test_/bg/"),
-                ('de', "./data/test_/de/"), ('en', "./data/test_/en/")]
+        test_files = [(language, "./data/test_/%s/" % language) for language in args.languages]
 
     language_class = LanguageMemoryDataset if args.on_memory else LanguageDataset
     dicriminator_class = DiscriminatorMemoryDataset if args.on_memory else DiscriminatorDataset
@@ -151,8 +150,9 @@ if __name__ == '__main__':
                     num_workers=args.batch_workers, drop_last=True, pin_memory=args.enable_cuda)
             for language, dataset, sampler in test_raw}
 
-    print({key: len(value) for key, value in train_data.items()})
-    print({key: len(value) for key, value in test_data.items()})
+    if not args.local_rank:
+        print({key: len(value) for key, value in train_data.items()})
+        print({key: len(value) for key, value in test_data.items()})
 
     # initialize model and trainer
     trainer_class = DistributedAdversarialPretrainer if args.local_rank is not None else AdversarialPretrainer

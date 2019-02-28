@@ -232,11 +232,11 @@ class AdversarialPretrainer:
 
         # initialize optimizers
         if parallelize:
-            self.D_optim = Adafactor(self.model.module.component_parameters("adversary"))
-            self.lm_optims = Adafactor(self.model.module.component_parameters())
+            self.D_optim = Adafactor(self.model.module.component_parameters("adversary"), config.lr)
+            self.lm_optims = Adafactor(self.model.module.component_parameters(), config.lr)
         else:
-            self.D_optim = Adafactor(self.model.component_parameters("adversary")) # adversary optimizer
-            self.lm_optims = Adafactor(self.model.component_parameters())
+            self.D_optim = Adafactor(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
+            self.lm_optims = Adafactor(self.model.component_parameters(), config.lr)
 
         # hyperparameters for loss
         self.beta = config.beta
@@ -469,9 +469,9 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self.D_repeat = config.adv_repeat
 
         # initialize optimizers
-        self.D_optim = Adafactor(self.model.module.component_parameters("adversary")) # adversary optimizer
-        self.lm_optims = Adafactor(self.model.module.component_parameters())
-        
+        self.D_optim = Adafactor(self.model.module.component_parameters("adversary"), config.lr)
+        self.lm_optims = Adafactor(self.model.module.component_parameters(), config.lr)
+
         # hyperparameters for loss
         self.beta = config.beta
         self.gamma = config.gamma

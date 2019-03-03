@@ -54,8 +54,9 @@ if __name__ == '__main__':
     parser.add_argument("--adversary_workers", type=int, default=0)
     parser.add_argument("--local_rank", type=int, default=None)
 
-    # debugging
+    # special datasets
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--small_dataset", action="store_true")
 
     args = parser.parse_args()
 
@@ -73,7 +74,8 @@ if __name__ == '__main__':
 
     if args.pretrained_bert:
         tokenizer = BertTokenizer.from_pretrained(args.pretrained_bert)
-        model = MultilingualBert.from_pretrained_bert(ltoi, args.pretrained_bert)
+        model = MultilingualBert.from_pretrained_bert(ltoi, args.pretrained_bert,
+                noise_func=lambda x: 1e-3 * torch.randn_like(x))
         model_config = model.config
     else:
         tokenizer = BertTokenizer(args.vocab_file)
@@ -112,10 +114,14 @@ if __name__ == '__main__':
         adversary_file = "./example_data/"
         test_files = [('ar', "./example_data/ar/"), ('bg', "./example_data/bg/"),
                 ('de', "./example_data/de/"), ('en', "./example_data/en/")]
-    else:
+    elif args.small_dataset:
         train_files = [(language, "./data/train_/%s/" % language) for language in args.languages]
         adversary_file = "./data/train_/"
         test_files = [(language, "./data/test_/%s/" % language) for language in args.languages]
+    else:
+        train_files = [(language, "./data/train/%s/" % language) for language in args.languages]
+        adversary_file = "./data/train/"
+        test_files = [(language, "./data/test/%s/" % language) for language in args.languages]
 
     language_class = LanguageMemoryDataset if args.on_memory else LanguageDataset
     dicriminator_class = DiscriminatorMemoryDataset if args.on_memory else DiscriminatorDataset

@@ -33,11 +33,6 @@ class MultilingualBert(nn.Module):
         self.private = nn.ModuleDict({language: NoEmbeddingBertModel(config)
                 for language in config.languages})
 
-        # init embeddings
-        #for module in self.embeddings.modules():
-        #    if isinstance(module, nn.Embedding):
-        #        module.weight.data.normal_(mean=0.0, std=config.initializer_range)    
-
     def forward(self, language, input_ids, token_type_ids=None, attention_mask=None):
         assert language in self.private
         if token_type_ids is None:
@@ -61,7 +56,7 @@ class MultilingualBert(nn.Module):
             self.embeddings.parameters())
 
     @classmethod
-    def from_pretrained_bert(cls, languages, *args, **kwargs):
+    def from_pretrained_bert(cls, languages, *args, noise_func=None, **kwargs):
         pretrained_bert = BertModel.from_pretrained(*args, **kwargs)
         pretrained_state = pretrained_bert.state_dict()
 
@@ -80,7 +75,10 @@ class MultilingualBert(nn.Module):
                 new_key = '.'.join(key.split('.')[2:])
             else:
                 raise ValueError("missing key corresponding to %s" % key)
-            bert_state[key] = pretrained_state[new_key]
+            new_weight = pretrained_state[new_key]
+            if add_noise is not None:
+                new_weight += noise_func(pretrained_state[new_key])
+            bert_state[key] = new_weight
 
         model.load_state_dict(bert_state)
         return model

@@ -367,8 +367,8 @@ class AdversarialPretrainer:
         avg_mask_acc = total_mask_correct / total_mask_elements
         avg_next_acc = total_next_acc / total_batches
 
-        print("EP{0}_{1}_{2}:\nmask={3:.6f}\tnext={4:.6f}\tadv={5:.6f}\ndiff={6:.6f}\tmask_acc={7:.6f}\tnext_acc={8:.6f}".format(
-                epoch, language, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_mask_acc, avg_next_acc))
+        print("EP{0}_{1}:\nmask={2:.6f}\tnext={3:.6f}\tadv={4:.6f}\ndiff={5:.6f}\tmask_acc={6:.6f}\tnext_acc={7:.6f}".format(
+                epoch, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_mask_acc, avg_next_acc))
 
         return avg_loss
 

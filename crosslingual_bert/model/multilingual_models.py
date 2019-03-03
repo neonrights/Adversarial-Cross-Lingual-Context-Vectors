@@ -68,7 +68,8 @@ class MultilingualBert(nn.Module):
         bert_state = model.state_dict().copy()
         for key in bert_state:
             if key.startswith('embeddings.'):
-                new_key = key
+                bert_state[key] = pretrained_state[key]
+                continue
             elif key.startswith('shared.'):
                 new_key = '.'.join(key.split('.')[1:])
             elif key.startswith('private.'):

@@ -40,7 +40,6 @@ class SmoothedRandomSampler:
                     break
                 r -= prob
 
-        print(language_sequence)
         # generate batches as determined beforehand
         dataset_iters = {key: iter(value) for key, value in self.datasets.items()}
         for language in language_sequence:

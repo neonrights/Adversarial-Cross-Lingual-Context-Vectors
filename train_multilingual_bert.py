@@ -7,10 +7,10 @@ import torch.multiprocessing as mp
 
 from torch.utils.data import DataLoader, DistributedSampler
 
-from crosslingual_bert.dataset import BertTokenizer, LanguageDataset, DiscriminatorDataset
+from pytorch_pretrained_bert import BertTokenizer
+from crosslingual_bert.dataset import LanguageDataset, LanguageMemoryDataset, DiscriminatorDataset, DiscriminatorMemoryDataset
 from crosslingual_bert.model import MultilingualBert, MultilingualConfig
 from crosslingual_bert.trainer import AdversarialPretrainer, DistributedAdversarialPretrainer, AdversarialPretrainerConfig
-import pdb
 
 
 if __name__ == '__main__':
@@ -28,6 +28,7 @@ if __name__ == '__main__':
     parser.add_argument("--max_position_embeddings", type=int, default=512)
     parser.add_argument("--type_vocab_size", type=int, default=16)
     parser.add_argument("--initializer_range", type=float, default=0.02)
+    parser.add_argument("--languages", type=str, nargs='+')
 
     # training parameters
     parser.add_argument("--batch_size", type=int, default=32)
@@ -35,10 +36,11 @@ if __name__ == '__main__':
     parser.add_argument("--adversary_batch_size", type=int, default=64)
     parser.add_argument("--sequence_length", type=int, default=192) # XNLI max sequence length with wordpiece tokenization is 167
     parser.add_argument("--adversary_repeat", type=int, default=5)
-    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument("--adversary_loss_weight", type=float, default=1e-4)
     parser.add_argument("--frobenius_loss_weight", type=float, default=1e-6)
     parser.add_argument("--epochs", type=int, default=1000)
+    parser.add_argument("--pretrained_bert", type=str, default=None)
 
     # checkpoint parameters
     parser.add_argument("--checkpoint_folder", type=str, default="./checkpoints/")
@@ -46,13 +48,15 @@ if __name__ == '__main__':
     parser.add_argument("--checkpoint_frequency", type=int, default=10)
 
     # hardware parameters
+    parser.add_argument("--on_memory", action="store_true")
     parser.add_argument("--enable_cuda", action="store_true")
     parser.add_argument("--batch_workers", type=int, default=0)
     parser.add_argument("--adversary_workers", type=int, default=0)
     parser.add_argument("--local_rank", type=int, default=None)
 
-    # debugging
+    # special datasets
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--small_dataset", action="store_true")
 
     args = parser.parse_args()
 
@@ -64,23 +68,32 @@ if __name__ == '__main__':
         print("Started process %d" % args.local_rank)
 
     # initialize model and trainer configurations
-    ltoi = {'ar': 0, 'bg': 1, 'de': 2, 'en': 3}
-    tokenizer = BertTokenizer(args.vocab_file)
+    ltoi = {language: index for index, language in enumerate(args.languages)}
+    if args.local_rank is not None:
+        torch.manual_seed(80085)
 
-    model_config = MultilingualConfig(
-        languages=ltoi,
-        vocab_size=len(tokenizer.vocab),
-        hidden_size=args.hidden_size,
-        num_hidden_layers=args.num_hidden_layers,
-        num_attention_heads=args.num_attention_heads,
-        intermediate_size=args.intermediate_size,
-        hidden_act=args.hidden_act,
-        hidden_dropout_prob=args.hidden_dropout_prob,
-        attention_probs_dropout_prob=args.attention_dropout_prob,
-        max_position_embeddings=args.max_position_embeddings,
-        type_vocab_size=args.type_vocab_size,
-        initializer_range=args.initializer_range,
-    )
+    if args.pretrained_bert:
+        tokenizer = BertTokenizer.from_pretrained(args.pretrained_bert)
+        model = MultilingualBert.from_pretrained_bert(ltoi, args.pretrained_bert,
+                noise_func=lambda x: 1e-3 * torch.randn_like(x))
+        model_config = model.config
+    else:
+        tokenizer = BertTokenizer(args.vocab_file)
+        model_config = MultilingualConfig(
+            languages=ltoi,
+            vocab_size_or_config_json_file=len(tokenizer.vocab),
+            hidden_size=args.hidden_size,
+            num_hidden_layers=args.num_hidden_layers,
+            num_attention_heads=args.num_attention_heads,
+            intermediate_size=args.intermediate_size,
+            hidden_act=args.hidden_act,
+            hidden_dropout_prob=args.hidden_dropout_prob,
+            attention_probs_dropout_prob=args.attention_dropout_prob,
+            max_position_embeddings=args.max_position_embeddings,
+            type_vocab_size=args.type_vocab_size,
+            initializer_range=args.initializer_range,
+        )
+        model = MultilingualBert(model_config)
 
     trainer_config = AdversarialPretrainerConfig(
         model_config=model_config,
@@ -99,20 +112,25 @@ if __name__ == '__main__':
         train_files = [('ar', "./example_data/ar/"), ('bg', "./example_data/bg/"),
                 ('de', "./example_data/de/"), ('en', "./example_data/en/")]
         adversary_file = "./example_data/"
-        test_files = [('ar', "./example_data/ar"), ('bg', "./example_data/bg/"),
+        test_files = [('ar', "./example_data/ar/"), ('bg', "./example_data/bg/"),
                 ('de', "./example_data/de/"), ('en', "./example_data/en/")]
+    elif args.small_dataset:
+        train_files = [(language, "./data/train_/%s/" % language) for language in args.languages]
+        adversary_file = "./data/train_/"
+        test_files = [(language, "./data/test_/%s/" % language) for language in args.languages]
     else:
-        train_files = [('ar', "./data/train/ar/"), ('bg', "./data/train/bg/"),
-                ('de', "./data/train/de/"), ('en', "./data/train/en/")]
+        train_files = [(language, "./data/train/%s/" % language) for language in args.languages]
         adversary_file = "./data/train/"
-        test_files = [('ar', "./data/test/ar"), ('bg', "./data/test/bg/"),
-                ('de', "./data/test/de/"), ('en', "./data/test/en/")]
+        test_files = [(language, "./data/test/%s/" % language) for language in args.languages]
 
-    train_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length))
+    language_class = LanguageMemoryDataset if args.on_memory else LanguageDataset
+    dicriminator_class = DiscriminatorMemoryDataset if args.on_memory else DiscriminatorDataset
+
+    train_raw = [(language, language_class(language, file_path, tokenizer, args.sequence_length, verbose=not args.local_rank))
             for language, file_path in train_files]
-    adversary_raw = DiscriminatorDataset(adversary_file, tokenizer, ltoi, args.sequence_length)
+    adversary_raw = dicriminator_class(adversary_file, tokenizer, ltoi, args.sequence_length, verbose=not args.local_rank)
 
-    test_raw = [(language, LanguageDataset(language, file_path, tokenizer, args.sequence_length))
+    test_raw = [(language, language_class(language, file_path, tokenizer, args.sequence_length, verbose=not args.local_rank))
             for language, file_path in test_files]
 
     if args.local_rank is not None:
@@ -138,8 +156,9 @@ if __name__ == '__main__':
                     num_workers=args.batch_workers, drop_last=True, pin_memory=args.enable_cuda)
             for language, dataset, sampler in test_raw}
 
-    print({key: len(value) for key, value in train_data.items()})
-    print({key: len(value) for key, value in test_data.items()})
+    if not args.local_rank:
+        print({key: len(value) for key, value in train_data.items()})
+        print({key: len(value) for key, value in test_data.items()})
 
     # initialize model and trainer
     trainer_class = DistributedAdversarialPretrainer if args.local_rank is not None else AdversarialPretrainer
@@ -164,19 +183,18 @@ if __name__ == '__main__':
                 best_loss = test_loss
 
         # try restoring from checkpoint
-        trainer, start = trainer_class.load_checkpoint(os.path.join(args.checkpoint_folder, 'checkpoint.state'),
-                MultilingualBert, train_data, test_data, verbose=not args.locak_rank)
+        trainer, start = trainer_class.load_checkpoint(args.checkpoint_folder,
+                MultilingualBert, train_data, test_data, position=args.local_rank)
     except FileNotFoundError:
-        if args.local_rank is not None:
-            torch.manual_seed(80085)
-        model = MultilingualBert(model_config)
         trainer = trainer_class(model, trainer_config, train_data, test_data, position=args.local_rank, seed=420)
         start = 0
         best_epoch = 0
         best_loss = 1e9
 
-    if not os.path.isdir(args.checkpoint_folder):
+    try:
         os.mkdir(args.checkpoint_folder)
+    except FileExistsError:
+        pass
 
     # train model, checkpoint every 10th epoch
     print("starting training")

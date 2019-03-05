@@ -29,13 +29,13 @@ Samples belonging to a single language should be kept in the same directory with
 ```txt
 data
 |-- en
-	|-- sample_1.txt
-	|-- sample_2.txt
-	|-- en_subdir
-		|-- sample_3.txt
+    |-- sample_1.txt
+    |-- sample_2.txt
+    |-- en_subdir
+        |-- sample_3.txt
 |-- vi
-	|-- sample_1.txt
-	|-- sample_2.txt
+    |-- sample_1.txt
+    |-- sample_2.txt
 ```
 
 The file can be used by the dataset class **LanguageDataset** to train for a specific language.

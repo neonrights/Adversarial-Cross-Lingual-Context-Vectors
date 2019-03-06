@@ -1,4 +1,4 @@
-\documentclass[10pt,letterpaper,twocolumn]{article}
+\documentclass[12pt,letterpaper,twocolumn]{article}
 \usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
 \usepackage{amsmath}
@@ -6,7 +6,10 @@
 \usepackage{amssymb}
 \usepackage{graphicx}
 \usepackage[margin=1in]{geometry}
-\usepackage{algorithmicx}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{subcaption}
+\usepackage{lipsum}
 
 \title{Adversarial Cross-lingual Language Models}
 \author{Farn, Nicholas\\
@@ -74,28 +77,29 @@ Before training the shared and private language models, the discriminator is fir
 Due to the already large size of BERT, AXLM is even larger, and grows linearly in size with number of languages considered.  However, this is not a problem during forward and backward propagation since only the shared and a single private language model are used at a time.  However, depending on the optimizer used, the linear increase in weights can lead to hefty memory costs when using optimizers such as Adam which uses twice as much memory as the model weights.  For this reason Adafactor was used instead \cite{}.  Best settings used during optimization.  Any kind of corrections used as well.
 
 \section{Evaluation}
+
 After pretraining, AXLM was tuned for a translation task.  Its performance is evaluated through the use of the XNLI dataset \cite{}.  Due to the larger number of parameters available to AXLM compared to other competing crosslingual language models, the shared language model was separated and its performance evaluated by itself as well.  Several smaller models were also developed to provide guidance on the choice of setting $\beta$ and $\gamma$, whose results will be discussed.
 
 It is currently impossible to train a full-sized model on the scale of BERT or ELMo that uses all 15 languages available in the XNLI dataset.  Due to the linear increase in model parameters per language and an 11 GB limitation per GPU, it is currently impossible to fit the minimum batch size into memory.  Using only Arabic, Bulgarian, German, and English, it takes approximately a week and a half to fully train a model on <1\% of available data using pre-trained BERT weights as a warm initialization.  Instead a severely reduced model is used instead for testing and evaluation.
 
 Due to a lack of sufficient data, urdu was also not considered.
 
-\begin{table}[ht!]
+\begin{table*}[!t]
+	\begin{subtable}{1\textwidth}
 	\centering
 	\begin{tabular}{c|cccc}
-		model name & hidden & intermediate & attention layers & total parameters \\
+		model & hidden & intermediate & attention layers & total parameters \\
 		\hline
 		Bert-Base & 768 & 3072 & 12 & 110 million \\
-		Bert-Full
-		AXLM-Reduced
-		AXLM-Full
+		Bert-Full & 1024 & 4096 & 24 & 340 million \\
+		AXLM-Reduced & 192 & 768 & 12 & 98 million \\
+		AXLM-Full & 768 & 3072 & 12 & 1.4 billion \\
+		\hline
 	\end{tabular}
 	\caption{table for model hyperparameters}
-\end{table}
-
-\subsection{Results and Analysis}
-
-\begin{table}[ht!]
+	\end{subtable}
+	\bigskip
+	\begin{subtable}{1\textwidth}
 	\centering
 	\begin{tabular}{c|cccccccccccccc}
 		model & ar & bg & de & el & es & fr & hi & ru & sw & th & tr & ur & vi & zh \\
@@ -105,9 +109,16 @@ Due to a lack of sufficient data, urdu was also not considered.
 		AXLM & \\
 	\end{tabular}
 	\caption{table for *-EN BLEU scores on XNLI dataset}
-\end{table}
+	\end{subtable}
+\end{table*}
+
+\subsection{Results and Analysis}
+
+\lipsum[1]
 
 \section{Conclusion}
+
+\lipsum[2]
 
 \nocite{*}
 \bibliography{project_report}
@@ -120,19 +131,16 @@ pseudo-code for training and fine-tuning algorithms
 \begin{algorithm}
 	\caption{multilingual training of a shared-private language model}
 	\begin{algorithmic}
-	
 		\For{$r \gets 1 \textrm{ to repeats}$}
 			\For{batch in datasets}
 				\State{Sample sentence input ids $X$ and language labels $y$}
 				\State{logits $\gets D(E(X))$}
-				\State{$\mathcal{L}_D \gets$ NLLLoss(logits, $y$)
+				\State{$\mathcal{L}_D \gets$ NLLLoss(logits, $y$)}
 				\State{Adafactor.update($\nabla\mathcal{L}_D$)}
 			\EndFor
 		\EndFor
 		\For{batch in datasets}
 			\State{Sample sentences}
-			\State{
-			\State{}
 		\EndFor
 	\end{algorithmic}
 \end{algorithm}

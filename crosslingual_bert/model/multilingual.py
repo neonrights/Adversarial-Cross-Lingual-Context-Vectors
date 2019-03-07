@@ -5,11 +5,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .modeling import BertConfig, BertEmbeddings, NoEmbeddingBertModel,\
-        BertModel, TranslatorModel
+from .transformer import TransformerConfig, EncoderModel, DecoderModel, BertEmbeddings
 
 
-class MultilingualConfig(BertConfig):
+class MultilingualConfig(TransformerConfig):
     def __init__(self, languages, *args, **kwargs):
         self.languages = languages
         super().__init__(*args, **kwargs)
@@ -29,8 +28,8 @@ class MultilingualBert(nn.Module):
         super().__init__()
         self.config = config
         self.embeddings = BertEmbeddings(config)
-        self.shared = NoEmbeddingBertModel(config)
-        self.private = nn.ModuleDict({language: NoEmbeddingBertModel(config)
+        self.shared = EncoderModel(config)
+        self.private = nn.ModuleDict({language: EncoderModel(config)
                 for language in config.languages})
 
     def forward(self, language, input_ids, token_type_ids=None, attention_mask=None):
@@ -67,7 +66,7 @@ class MultilingualTranslator(nn.Module):
         for p in self.multilingual_model.parameters():
             p.requires_grad = False
 
-        self.translator_model = TranslatorModel(config)
+        self.translator_model = DecoderModel(config)
         self.target_language = target_language
 
     def forward(self, language, input_ids, target_ids, input_mask=None, target_mask=None):

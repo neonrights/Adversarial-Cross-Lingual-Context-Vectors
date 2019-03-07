@@ -156,20 +156,28 @@ except ImportError:
             x = (x - u) / torch.sqrt(s + self.variance_epsilon)
             return self.weight * x + self.bias
 
-class Embeddings(nn.Module):
+class BertEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings.
     """
     def __init__(self, config):
-        super(Embeddings, self).__init__()
+        super(BertEmbeddings, self).__init__()
         self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
-        self.position_embeddings.requires_grad = False
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
         self.LayerNorm = LayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        # initialize position embeddings
+        self.position_embeddings.weight.requires_grad = False
+        for pos in range(config.max_position_embeddings):
+            for i in range(0, config.hidden_size, 2):
+                self.position_embeddings.weight[pos, i] =\
+                        math.sin(pos / (10000 ** ((2 * i)/config.hidden_size)))
+                self.position_embeddings.weight[pos, i+1] =\
+                        math.cos(pos / (10000 ** ((2 * i + 1)/config.hidden_size)))
 
     def forward(self, input_ids, token_type_ids=None):
         seq_length = input_ids.size(1)
@@ -282,7 +290,7 @@ class Intermediate(nn.Module):
 
 class TransformerOutput(nn.Module):
     def __init__(self, config):
-        super(Output, self).__init__()
+        super(TransformerOutput, self).__init__()
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = LayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -296,13 +304,13 @@ class TransformerOutput(nn.Module):
 
 class TransformerLayer(nn.Module):
     def __init__(self, config):
-        super(Layer, self).__init__()
+        super(TransformerLayer, self).__init__()
         self.attention = Attention(config)
         self.intermediate = Intermediate(config)
         self.output = TransformerOutput(config)
 
     def forward(self, encoder_states, decoder_states, attention_mask):
-        attention_output = self.attention(hidden_states, decoder_states, attention_mask)
+        attention_output = self.attention(encoder_states, decoder_states, attention_mask)
         intermediate_output = self.intermediate(attention_output)
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
@@ -360,7 +368,7 @@ class Pooler(nn.Module):
 class TransformerModel(nn.Module):
     def __init__(self, config):
         super().__init__()
-        if not isinstance(config, BertConfig):
+        if not isinstance(config, TransformerConfig):
             raise ValueError(
                 "Parameter config in `{}(config)` should be an instance of class `BertConfig`. "
                 "To create a model from a Google pretrained model use "
@@ -376,7 +384,7 @@ class TransformerModel(nn.Module):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-        elif isinstance(module, BertLayerNorm):
+        elif isinstance(module, LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
         if isinstance(module, nn.Linear) and module.bias is not None:
@@ -430,8 +438,8 @@ class BertModel(TransformerModel):
     def __init__(self, config):
         super(BertModel, self).__init__(config)
         self.embeddings = BertEmbeddings(config)
-        self.encoder = BertEncoder(config)
-        self.pooler = BertPooler(config)
+        self.encoder = Encoder(config)
+        self.pooler = Pooler(config)
         self.apply(self.init_weights)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True):
@@ -466,11 +474,11 @@ class BertModel(TransformerModel):
         return encoded_layers, pooled_output
 
 
-class NoEmbeddingBertModel(TransformerModel):
+class EncoderModel(TransformerModel):
     def __init__(self, config):
         super().__init__(config)
-        self.encoder = BertEncoder(config)
-        self.pooler = BertPooler(config)
+        self.encoder = Encoder(config)
+        self.pooler = Pooler(config)
         self.apply(self.init_weights)
 
     def forward(self, input_vectors, attention_mask=None, output_all_encoded_layers=True):
@@ -503,7 +511,7 @@ class NoEmbeddingBertModel(TransformerModel):
         return encoded_layers, pooled_output
 
 
-class TranslatorModel(nn.Module):
+class DecoderModel(nn.Module):
     """BERT model ("Bidirectional Embedding Representations from a Transformer").
 
     Params:
@@ -550,8 +558,8 @@ class TranslatorModel(nn.Module):
     def __init__(self, config):
         super(NoEmbeddingBertModel, self).__init__()
         self.config = config
-        self.decoder = BertDecoder(config)
-        self.pooler = BertPooler(config)
+        self.decoder = Decoder(config)
+        self.pooler = Pooler(config)
         self.apply(self.init_weights)
 
     def forward(self, encoder_vectors, decoder_vectors, encoder_mask=None, decoder_mask=None, output_all_encoded_layers=True):

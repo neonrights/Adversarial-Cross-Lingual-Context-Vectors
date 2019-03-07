@@ -1,1 +1,1 @@
-from .multilingual_models import MultilingualBert, MultilingualConfig
+from .multilingual import MultilingualBert, MultilingualConfig

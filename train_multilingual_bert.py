@@ -28,7 +28,7 @@ if __name__ == '__main__':
     parser.add_argument("--max_position_embeddings", type=int, default=512)
     parser.add_argument("--type_vocab_size", type=int, default=16)
     parser.add_argument("--initializer_range", type=float, default=0.02)
-    parser.add_argument("--languages", type=str, nargs='+')
+    parser.add_argument("--languages", type=str, nargs='+', required=True)
 
     # training parameters
     parser.add_argument("--batch_size", type=int, default=32)
@@ -40,14 +40,13 @@ if __name__ == '__main__':
     parser.add_argument("--adversary_loss_weight", type=float, default=1e-4)
     parser.add_argument("--frobenius_loss_weight", type=float, default=1e-6)
     parser.add_argument("--epochs", type=int, default=1000)
-    parser.add_argument("--pretrained_bert", type=str, default=None)
 
     # checkpoint parameters
     parser.add_argument("--checkpoint_folder", type=str, default="./checkpoints/")
     parser.add_argument("--restore_checkpoint", action="store_true")
     parser.add_argument("--checkpoint_frequency", type=int, default=10)
 
-    # hardware parameters
+    # device parameters
     parser.add_argument("--on_memory", action="store_true")
     parser.add_argument("--enable_cuda", action="store_true")
     parser.add_argument("--batch_workers", type=int, default=0)
@@ -72,28 +71,22 @@ if __name__ == '__main__':
     if args.local_rank is not None:
         torch.manual_seed(80085)
 
-    if args.pretrained_bert:
-        tokenizer = BertTokenizer.from_pretrained(args.pretrained_bert)
-        model = MultilingualBert.from_pretrained_bert(ltoi, args.pretrained_bert,
-                noise_func=lambda x: 1e-3 * torch.randn_like(x))
-        model_config = model.config
-    else:
-        tokenizer = BertTokenizer(args.vocab_file)
-        model_config = MultilingualConfig(
-            languages=ltoi,
-            vocab_size_or_config_json_file=len(tokenizer.vocab),
-            hidden_size=args.hidden_size,
-            num_hidden_layers=args.num_hidden_layers,
-            num_attention_heads=args.num_attention_heads,
-            intermediate_size=args.intermediate_size,
-            hidden_act=args.hidden_act,
-            hidden_dropout_prob=args.hidden_dropout_prob,
-            attention_probs_dropout_prob=args.attention_dropout_prob,
-            max_position_embeddings=args.max_position_embeddings,
-            type_vocab_size=args.type_vocab_size,
-            initializer_range=args.initializer_range,
-        )
-        model = MultilingualBert(model_config)
+    tokenizer = BertTokenizer(args.vocab_file)
+    model_config = MultilingualConfig(
+        languages=ltoi,
+        vocab_size_or_config_json_file=len(tokenizer.vocab),
+        hidden_size=args.hidden_size,
+        num_hidden_layers=args.num_hidden_layers,
+        num_attention_heads=args.num_attention_heads,
+        intermediate_size=args.intermediate_size,
+        hidden_act=args.hidden_act,
+        hidden_dropout_prob=args.hidden_dropout_prob,
+        attention_probs_dropout_prob=args.attention_dropout_prob,
+        max_position_embeddings=args.max_position_embeddings,
+        type_vocab_size=args.type_vocab_size,
+        initializer_range=args.initializer_range,
+    )
+    model = MultilingualBert(model_config)
 
     trainer_config = AdversarialPretrainerConfig(
         model_config=model_config,
@@ -129,7 +122,6 @@ if __name__ == '__main__':
     train_raw = [(language, language_class(language, file_path, tokenizer, args.sequence_length, verbose=not args.local_rank))
             for language, file_path in train_files]
     adversary_raw = dicriminator_class(adversary_file, tokenizer, ltoi, args.sequence_length, verbose=not args.local_rank)
-
     test_raw = [(language, language_class(language, file_path, tokenizer, args.sequence_length, verbose=not args.local_rank))
             for language, file_path in test_files]
 
@@ -137,13 +129,11 @@ if __name__ == '__main__':
         train_raw = [(language, dataset, DistributedSampler(dataset))
                     for language, dataset in train_raw]
         adversary_sampler = DistributedSampler(adversary_raw)
-
         test_raw = [(language, dataset, DistributedSampler(dataset))
                     for language, dataset in test_raw]
     else:
         train_raw = [(language, dataset, None) for language, dataset in train_raw]
         adversary_sampler = None
-
         test_raw = [(language, dataset, None) for language, dataset in test_raw]
 
     train_data = {language: DataLoader(dataset, batch_size=args.batch_size, sampler=sampler,
@@ -151,7 +141,6 @@ if __name__ == '__main__':
             for language, dataset, sampler in train_raw}
     train_data["adversary"] = DataLoader(adversary_raw, batch_size=args.adversary_batch_size, sampler=adversary_sampler,
             num_workers=args.adversary_workers, pin_memory=args.enable_cuda)
-
     test_data = {language: DataLoader(dataset, batch_size=args.batch_size, sampler=sampler,
                     num_workers=args.batch_workers, drop_last=True, pin_memory=args.enable_cuda)
             for language, dataset, sampler in test_raw}

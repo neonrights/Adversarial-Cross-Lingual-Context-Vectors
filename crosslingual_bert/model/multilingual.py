@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from pytorch_pretrained_bert import BertConfig, BertEmbeddings, NoEmbeddingBertModel, BertModel
-#from .translator import TranslatorModel
+from .modeling import BertConfig, BertEmbeddings, NoEmbeddingBertModel,\
+        BertModel, TranslatorModel
 
 
 class MultilingualConfig(BertConfig):
@@ -55,48 +55,17 @@ class MultilingualBert(nn.Module):
             self.private[language].parameters(),
             self.embeddings.parameters())
 
-    @classmethod
-    def from_pretrained_bert(cls, languages, *args, noise_func=None, **kwargs):
-        pretrained_bert = BertModel.from_pretrained(*args, **kwargs)
-        pretrained_state = pretrained_bert.state_dict()
 
-        # convert bert config into multilingual config
-        config = copy.deepcopy(pretrained_bert.config)
-        config.languages = languages
-        model = cls(config)
-
-        bert_state = model.state_dict().copy()
-        for key in bert_state:
-            if key.startswith('embeddings.'):
-                bert_state[key] = pretrained_state[key]
-                continue
-            elif key.startswith('shared.'):
-                new_key = '.'.join(key.split('.')[1:])
-            elif key.startswith('private.'):
-                new_key = '.'.join(key.split('.')[2:])
-            else:
-                raise ValueError("missing key corresponding to %s" % key)
-            new_weight = pretrained_state[new_key]
-            if add_noise is not None:
-                new_weight += noise_func(pretrained_state[new_key])
-            bert_state[key] = new_weight
-
-        model.load_state_dict(bert_state)
-        return model
-
-
-"""
 class MultilingualTranslator(nn.Module):
+    """
     Universal to target language translation model using transformer architecture
+    """
     def __init__(self, model: MultilingualBert, target_language: str, config: MultilingualConfig):
         assert target_language in model.private
         super().__init__()
-        self.multilingual_model = model
-        
-        # double intermediate and hidden size to account for shared-private model
-        config = copy.copy(config)
-        config.intermediate_size *= 2
-        config.hidden_size *= 2
+        self.multilingual_model = model.eval()
+        for p in self.multilingual_model.parameters():
+            p.requires_grad = False
 
         self.translator_model = TranslatorModel(config)
         self.target_language = target_language
@@ -108,4 +77,3 @@ class MultilingualTranslator(nn.Module):
 
     def language_parameters(self, language):
         return chain(self.translator_model.parameters(), self.multilingual_model.language_parameters(language))
-"""

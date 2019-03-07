@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from .optimization import BERTAdam
+from .optimization import BertAdam
 from .utils import *
 
 import tqdm
@@ -17,9 +17,7 @@ class TranslatorTrainer:
         2. Next Sentence prediction : 3.3.2 Task #2: Next Sentence Prediction
 
     please check the details on README.md with simple example.
-
     """
-
     def __init__(self, translator_model, languages, target_language, train_data, test_data, with_cuda=True, lr=1e-4, log_freq=10):
         """
         :param bert: BERT model which you want to train
@@ -52,7 +50,7 @@ class TranslatorTrainer:
         self.test_data = test_data
 
         # Setting the Adam optimizer with hyper-param
-        self.optims = {language: BERTAdam(self.model.language_parameters(language), lr=lr)
+        self.optims = {language: BertAdam(self.model.language_parameters(language), lr=lr)
                 for language in self.languages}
 
         # Using Negative Log Likelihood Loss function

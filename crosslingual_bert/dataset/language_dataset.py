@@ -1,6 +1,6 @@
+import os
+import os.path as path
 import time
-import queue
-import atexit
 import random
 import json
 import itertools
@@ -28,13 +28,11 @@ class LanguageDataset(Dataset):
     pytorch dataset that loads training/test dataset for a specific language
     """
     def __init__(self, language, corpus_path, tokenizer, max_seq_len,
-                encoding="utf-8", corpus_lines=None, on_memory=True, prob_config=ProbConfig(), position=0):
+                encoding="utf-8", prob_config=ProbConfig(), verbose=False):
         self.language = language
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         
-        self.on_memory = on_memory
-        self.corpus_lines = corpus_lines
         self.corpus_path = corpus_path
         self.encoding = encoding
 
@@ -42,36 +40,24 @@ class LanguageDataset(Dataset):
         self.keep_prob = prob_config.keep_prob
         self.swap_prob = prob_config.keep_prob + prob_config.swap_prob
 
-        with open(corpus_path, "r", encoding=encoding) as f:
-            if self.corpus_lines is None and not on_memory:
-                self.corpus_lines = 0
-                for _ in tqdm.tqdm(f, desc="Loading Dataset %s" % self.language, total=corpus_lines, position=position):
-                    self.corpus_lines += 1
+        # walk through directory, determine which files are adequate
+        self.file_names = []
+        for root, _, files in os.walk(corpus_path):
+            if verbose:
+                print("scanning %s" % root)
+            for file in files:
+                file_name = path.join(root, file)
+                with open(file_name, 'r', encoding=self.encoding) as f:
+                    sentences = f.readlines()
 
-            if on_memory:
-                self.lines = []
-                for line in tqdm.tqdm(f, desc="Loading Dataset %s" % self.language, total=corpus_lines, position=position):
-                    sentences = line.split('\t')
-                    if sentences and len(sentences) > 1:
-                        sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
-                                for sentence in sentences]
-                        if (len(sentences[0]) + 2) < self.max_seq_len:
-                            self.lines.append(sentences)
+                if len(sentences) > 1 and (len(sentences[0]) + 2) < self.max_seq_len:
+                    self.file_names.append(file_name)
 
-                self.corpus_lines = len(self.lines)
-
-        if not on_memory:
-            self.file = Queue(maxsize=10000)
-            self.random_file = Queue(maxsize=10000)
-
-            # initialize slave process to safely read from file
-            self.slave = Process(target=LanguageDataset.file_slave,
-                    args=(self.corpus_path, self.file, self.random_file, self.corpus_lines))
-            self.slave.daemon = True
-            self.slave.start()
+        if verbose:
+            print("processed %d samples" % len(self.file_names))
 
     def __len__(self):
-        return self.corpus_lines
+        return len(self.file_names)
 
     def __getitem__(self, item):
         sample = self.get_corpus_line(item)
@@ -83,7 +69,7 @@ class LanguageDataset(Dataset):
         s1_ids = np.hstack((self.tokenizer.vocab['[CLS]'], s1_random, self.tokenizer.vocab['[SEP]']))
         s2_ids = np.hstack((s2_random, self.tokenizer.vocab['[SEP]']))
 
-        segment_label = np.append(np.ones_like(s1_ids), 2*np.ones_like(s2_ids))[:self.max_seq_len]
+        segment_label = np.append(np.zeros_like(s1_ids), np.ones_like(s2_ids))[:self.max_seq_len]
         input_ids = np.append(s1_ids, s2_ids)[:self.max_seq_len]
         token_labels = np.hstack((0, s1_label, 0, s2_label, 0))[:self.max_seq_len]
 
@@ -144,6 +130,208 @@ class LanguageDataset(Dataset):
             return s1, np.hstack(self.get_random_line()), 0
 
     def get_corpus_line(self, item):
+        with open(self.file_names[item], 'r', encoding=self.encoding) as f:
+            sentences = f.readlines()
+
+        sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
+                    for sentence in sentences]
+        return sentences
+
+    def get_random_line(self):
+        with open(random.choice(self.file_names), 'r', encoding=self.encoding) as f:
+            sentences = f.readlines()
+
+        sample = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
+                for sentence in sentences]
+        split = 0 if len(sample) == 1 else random.randrange(len(sample)-1)
+        return sample[split:]
+
+
+class LanguageMemoryDataset(Dataset):
+    """
+    pytorch dataset that loads training/test dataset for a specific language
+    """
+    def __init__(self, language, corpus_path, tokenizer, max_seq_len,
+                encoding="utf-8", prob_config=ProbConfig(), verbose=False):
+        self.language = language
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+        
+        self.corpus_path = corpus_path
+        self.encoding = encoding
+
+        self.mask_prob = prob_config.mask_prob
+        self.keep_prob = prob_config.keep_prob
+        self.swap_prob = prob_config.keep_prob + prob_config.swap_prob
+
+        # walk through directory, determine which files are adequate
+        self.samples = []
+        for root, _, files in os.walk(corpus_path):
+            if verbose:
+                print("scanning %s" % root)
+            for file in files:
+                file_name = path.join(root, file)
+                with open(file_name, 'r', encoding=self.encoding) as f:
+                    sentences = f.readlines()
+
+                if len(sentences) > 1 and (len(sentences[0]) + 2) < self.max_seq_len:
+                    sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
+                            for sentence in sentences]
+                    self.samples.append(sentences)
+
+        if verbose:
+            print("processed %d samples" % len(self.samples))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, item):
+        sample = self.samples[item]
+        s1, s2, is_next = self.random_sentences(sample)
+        s1_random, s1_label = self.random_word(s1)
+        s2_random, s2_label = self.random_word(s2)
+
+        # [CLS] tag = SOS tag, [SEP] tag = EOS tag
+        s1_ids = np.hstack((self.tokenizer.vocab['[CLS]'], s1_random, self.tokenizer.vocab['[SEP]']))
+        s2_ids = np.hstack((s2_random, self.tokenizer.vocab['[SEP]']))
+
+        segment_label = np.append(np.zeros_like(s1_ids), np.ones_like(s2_ids))[:self.max_seq_len]
+        input_ids = np.append(s1_ids, s2_ids)[:self.max_seq_len]
+        token_labels = np.hstack((0, s1_label, 0, s2_label, 0))[:self.max_seq_len]
+
+        if self.max_seq_len - len(input_ids) > 0:
+            padding = np.zeros(self.max_seq_len - len(input_ids), dtype=np.long)
+            mask = np.hstack((np.ones_like(input_ids), np.zeros_like(padding)))
+            input_ids = np.append(input_ids, padding)
+            token_labels = np.append(token_labels, padding)
+            segment_label = np.append(segment_label, padding)
+        else:
+            mask = np.ones(self.max_seq_len, dtype=np.long)
+
+        output = {"input_ids": input_ids,
+                  "token_labels": token_labels,
+                  "segment_label": segment_label,
+                  "is_next": is_next,
+                  "mask": mask}
+
+        return {key: torch.tensor(value) for key, value in output.items()}
+
+    def random_word(self, sample):
+        ids = sample.copy()
+        output_label = np.zeros_like(sample)
+
+        for i in range(len(sample)):
+            prob = random.random()
+            if prob < self.mask_prob:
+                prob = random.random()
+                if prob < self.keep_prob: # keep same token
+                    continue
+                elif prob < self.swap_prob: # swap with random (keep in language?)
+                    ids[i] = random.randrange(107, len(self.tokenizer.vocab))
+                else: # swap with mask
+                    ids[i] = self.tokenizer.vocab['[MASK]']
+
+                output_label[i] = sample[i]
+
+        return ids, output_label
+
+    def random_sentences(self, sample):
+        # ensures first section is less than max_seq_len
+        assert len(sample) > 1
+        max_split = 0
+        token_count = 2 # extra two for sos_token and eos_token
+        for sentence in sample:
+            token_count += len(sentence)
+            if token_count >= self.max_seq_len:
+                break
+            max_split += 1
+
+        split = 1 if max_split == 1 else random.randrange(1, max_split)
+        s1 = np.hstack(sample[:split])
+
+        # shorten s1 so it is less than max seq len
+        if random.random() > 0.5:
+            return s1, np.hstack(sample[split:]), 1
+        else:
+            return s1, np.hstack(self.get_random_line()), 0
+
+    def get_random_line(self):
+        sample = random.choice(self.samples)
+        split = 0 if len(sample) == 1 else random.randrange(len(sample)-1)
+        return sample[split:]
+
+
+class LanguageStreamDataset(LanguageDataset):
+    """
+    pytorch dataset that loads training/test dataset for a specific language
+    """
+    def __init__(self, language, corpus_path, tokenizer, max_seq_len,
+                encoding="utf-8", corpus_lines=None, on_memory=True, prob_config=ProbConfig(), position=0):
+        self.language = language
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+        
+        self.on_memory = on_memory
+        self.corpus_lines = corpus_lines
+        self.corpus_path = corpus_path
+        self.encoding = encoding
+
+        self.mask_prob = prob_config.mask_prob
+        self.keep_prob = prob_config.keep_prob
+        self.swap_prob = prob_config.keep_prob + prob_config.swap_prob
+
+        with open(corpus_path, "r", encoding=encoding) as f:
+            if self.corpus_lines is None and not on_memory:
+                self.corpus_lines = 0
+                for _ in tqdm.tqdm(f, desc="Loading Dataset %s" % self.language, total=corpus_lines, position=position):
+                    self.corpus_lines += 1
+
+            if on_memory:
+                self.lines = []
+                for line in tqdm.tqdm(f, desc="Loading Dataset %s" % self.language, total=corpus_lines, position=position):
+                    sentences = line.split('\t')
+                    if sentences and len(sentences) > 1:
+                        sentences = [np.array(self.tokenizer.tokenize_and_convert_to_ids(sentence), dtype=np.long)
+                                for sentence in sentences]
+                        if (len(sentences[0]) + 2) < self.max_seq_len:
+                            self.lines.append(sentences)
+
+                self.corpus_lines = len(self.lines)
+
+        if not on_memory:
+            self.file = Queue(maxsize=10000)
+            self.random_file = Queue(maxsize=10000)
+
+            # initialize slave process to safely read from file
+            self.slave = Process(target=LanguageDataset.file_slave,
+                    args=(self.corpus_path, self.file, self.random_file, self.corpus_lines))
+            self.slave.daemon = True
+            self.slave.start()
+
+    def __len__(self):
+        return self.corpus_lines
+
+    def random_sentences(self, sample):
+        # ensures first section is less than max_seq_len
+        assert len(sample) > 1
+        max_split = 0
+        token_count = 2 # extra two for sos_token and eos_token
+        for sentence in sample:
+            token_count += len(sentence)
+            if token_count >= self.max_seq_len:
+                break
+            max_split += 1
+
+        split = 1 if max_split == 1 else random.randrange(1, max_split)
+        s1 = np.hstack(sample[:split])
+
+        # shorten s1 so it is less than max seq len
+        if random.random() > 0.5:
+            return s1, np.hstack(sample[split:]), 1
+        else:
+            return s1, np.hstack(self.get_random_line()), 0
+
+    def get_corpus_line(self, item):
         if self.on_memory:
             return self.lines[item]
 
@@ -170,43 +358,6 @@ class LanguageDataset(Dataset):
             return sample[split:]
         else:
             return sample
-
-    @staticmethod
-    def file_slave(file_name, q, random_q, line_count):
-        with open(file_name, 'r') as file, open(file_name, 'r') as random_file:
-            file_iter = iter(file)
-            random_iter = iter(random_file)
-            for _ in range(random.randrange(line_count if line_count < 1000 else 1000)):
-                next(random_iter)
-            
-            while True:
-                if q.empty():
-                    while not q.full():
-                        try:
-                            line = next(file_iter).strip()
-                            if line:
-                                q.put_nowait(line)
-                        except StopIteration:
-                            file.seek(0)
-                            file_iter = iter(file)
-                        except Queue.Full:
-                            break
-
-                if random_q.empty():
-                    while not random_q.full():
-                        try:
-                            line = next(random_iter).strip()
-                            if line:
-                                random_q.put_nowait(line)
-                        except StopIteration:
-                            random_file.seek(0)
-                            random_iter = iter(random_file)
-                            for _ in range(random.randrange(line_count if line_count < 1000 else 1000)):
-                                next(random_iter)
-                        except Queue.Full:
-                            break
-
-                time.sleep(0.05)
 
 
 class LanguageSwapDataset(Dataset):

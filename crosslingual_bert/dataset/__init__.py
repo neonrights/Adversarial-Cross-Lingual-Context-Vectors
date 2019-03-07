@@ -1,6 +1,3 @@
-from .dataset import BERTDataset
-from .vocab import WordVocab, JSONVocab
-from .discriminator_dataset import DiscriminatorDataset, DiscriminatorJSONDataset
-from .language_dataset import LanguageDataset, LanguageSwapDataset
+from .discriminator_dataset import DiscriminatorDataset, DiscriminatorMemoryDataset
+from .language_dataset import LanguageDataset, LanguageMemoryDataset
 from .parallel_dataset import ParallelDataset, ParallelTrainDataset
-from .tokenization import BertTokenizer

@@ -7,8 +7,7 @@ import torch.multiprocessing as mp
 
 from torch.utils.data import DataLoader, DistributedSampler
 
-from pytorch_pretrained_bert import BertTokenizer
-from crosslingual_bert.dataset import LanguageDataset, LanguageMemoryDataset, DiscriminatorDataset, DiscriminatorMemoryDataset
+from crosslingual_bert.dataset import BertTokenizer, LanguageDataset, LanguageMemoryDataset, DiscriminatorDataset, DiscriminatorMemoryDataset
 from crosslingual_bert.model import MultilingualBert, MultilingualConfig
 from crosslingual_bert.trainer import AdversarialPretrainer, DistributedAdversarialPretrainer, AdversarialPretrainerConfig
 

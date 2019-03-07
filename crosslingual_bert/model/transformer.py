@@ -368,13 +368,6 @@ class Pooler(nn.Module):
 class TransformerModel(nn.Module):
     def __init__(self, config):
         super().__init__()
-        if not isinstance(config, TransformerConfig):
-            raise ValueError(
-                "Parameter config in `{}(config)` should be an instance of class `BertConfig`. "
-                "To create a model from a Google pretrained model use "
-                "`model = {}.from_pretrained(PRETRAINED_MODEL_NAME)`".format(
-                    self.__class__.__name__, self.__class__.__name__
-                ))
         self.config = config
 
     def init_weights(self, module):

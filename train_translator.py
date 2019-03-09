@@ -8,7 +8,6 @@ from collections import OrderedDict
 from crosslingual_bert.dataset import ParallelDataset, ParallelTrainDataset, BertTokenizer
 from crosslingual_bert.trainer import TranslatorTrainer, TranslatorTrainerConfig
 from crosslingual_bert.model import MultilingualTranslator, MultilingualConfig, MultilingualBert
-import pdb
 
 
 if __name__ == '__main__':
@@ -84,7 +83,7 @@ if __name__ == '__main__':
             for language in args.languages]
     train_raw = [(language, ParallelTrainDataset(file_path, tokenizer, args.sequence_length, language, args.target_language))
             for language, file_path in train_files]
-    train_data = {language: DataLoader(train_raw, batch_size=args.batch_size, shuffle=True, num_workers=args.batch_workers, pin_memory=args.enable_cuda)
+    train_data = {language: DataLoader(dataset, batch_size=args.batch_size, num_workers=args.batch_workers, pin_memory=args.enable_cuda)
             for language, dataset in train_raw}
 
     # initialize trainer and model

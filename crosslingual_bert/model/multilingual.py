@@ -1,3 +1,4 @@
+import six
 import copy
 from itertools import chain
 from collections import OrderedDict
@@ -9,13 +10,14 @@ from .transformer import TransformerConfig, EncoderModel, DecoderModel, BertEmbe
 
 
 class MultilingualConfig(TransformerConfig):
-    def __init__(self, languages, *args, **kwargs):
+    def __init__(self, languages, *args, target_language=None, **kwargs):
         self.languages = languages
+        self.target_language = target_language
         super().__init__(*args, **kwargs)
 
     @classmethod
     def from_dict(cls, json_object):
-        config = MultilingualBertConfig(languages=None, vocab_size=None)
+        config = MultilingualConfig(languages=None, vocab_size_or_config_json_file=-1)
         for (key, value) in six.iteritems(json_object):
             config.__dict__[key] = value
         return config
@@ -59,15 +61,16 @@ class MultilingualTranslator(nn.Module):
     """
     Universal to target language translation model using transformer architecture
     """
-    def __init__(self, model: MultilingualBert, target_language: str, config: MultilingualConfig):
-        assert target_language in model.private
+    def __init__(self, model: MultilingualBert, config: MultilingualConfig):
+        assert config.target_language in model.private
         super().__init__()
+        self.config = config
         self.multilingual_model = model.eval()
         for p in self.multilingual_model.parameters():
             p.requires_grad = False
 
         self.translator_model = DecoderModel(config)
-        self.target_language = target_language
+        self.target_language = config.target_language
 
     def forward(self, language, input_ids, target_ids, input_mask=None, target_mask=None):
         language_vectors, _ = self.multilingual_model(language, input_ids, attention_mask=input_mask)

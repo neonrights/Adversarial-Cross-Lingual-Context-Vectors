@@ -5,6 +5,8 @@ import six
 import torch
 import torch.nn as nn
 
+from os import path
+from collections import OrderedDict
 from itertools import chain
 from torch.utils.data import DataLoader
 from apex.parallel import DistributedDataParallel
@@ -20,12 +22,11 @@ class AdversarialPretrainerConfig(object):
                 model_config,
                 language_ids,
                 adv_repeat=5,
-                lr=1e-4,
+                lr=None,
                 beta=1e-2,
                 gamma=1e-4,
                 with_cuda=True,
                 train_freq=None,
-                share_file=None,
                 gpu_id=0):
         
         if model_config is not None:
@@ -37,7 +38,6 @@ class AdversarialPretrainerConfig(object):
         self.gamma = gamma
         self.with_cuda = with_cuda
         self.train_freq = train_freq
-        self.share_file = share_file
         self.gpu_id = gpu_id
 
     @classmethod
@@ -244,7 +244,7 @@ class AdversarialPretrainer:
         # how many iterations to accumulate gradients for
         self.train_freq = config.train_freq if config.train_freq is not None else 1
 
-        self._config = config # for checkpointing
+        self.config = config # for checkpointing
         self.position = position
         self.seed = seed
 
@@ -374,6 +374,20 @@ class AdversarialPretrainer:
     def get_multilingual_model(self):
         return self.model.multilingual_model
 
+    @classmethod
+    def extract_multilingual_model(save_state_file, arch):
+        directory_path, _ = path.split(save_state_file)
+        config = AdversarialPretrainerConfig.from_json_file(path.join(directory_path, "config.json"))
+        model = arch(config)
+        
+        trained_state = OrderedDict()
+        checkpoint = torch.load(save_state_file)
+        for key in model.state_dict():
+            trained_state[key] = checkpoint["model"]["multilingual_model.%s" % key]
+
+        model.load_state_dict(trained_state)
+        return model
+
     def save(self, epoch, file_path=None):
         """saving the current training state in file_path
 
@@ -383,16 +397,16 @@ class AdversarialPretrainer:
         if file_path is None:
             file_path = "epoch.%d.state" % epoch
 
-        directory_path, file_name = os.path.split(file_path)
+        directory_path, file_name = path.split(file_path)
 
         if file_name == '':
-            file_path = os.path.join(directory_path, "epoch.%d.state" % epoch)
+            file_path = path.join(directory_path, "epoch.%d.state" % epoch)
 
-        if not os.path.exists(directory_path):
+        if not path.exists(directory_path):
             os.makedirs(directory_path)
 
-        with open(os.path.join(directory_path, "config.json"), 'w+') as f:
-            f.write(self._config.to_json_string())
+        with open(path.join(directory_path, "config.json"), 'w+') as f:
+            f.write(self.config.to_json_string())
 
         if isinstance(self.model, (nn.DataParallel, DistributedDataParallel)):
             model_state = self.model.module.cpu().state_dict()
@@ -403,6 +417,7 @@ class AdversarialPretrainer:
 
         # store optimizer state and model
         current_state = {
+            'name': 'adversarial_pretrainer',
             'epoch': epoch,
             'model': model_state,
             'optimizer': self.lm_optims.state_dict(),
@@ -412,15 +427,14 @@ class AdversarialPretrainer:
 
         print("Epoch %d Model and Trainer Saved in:" % epoch, file_path)
 
-
     @classmethod
     def load_checkpoint(cls, checkpoint_folder, arch, train_data, test_data=None, position=0):
         """loading a saved training and model state
         """
-        save_state = torch.load(os.path.join(checkpoint_folder, "checkpoint.state"))
+        save_state = torch.load(path.join(checkpoint_folder, "checkpoint.state"))
         print("Restoring from epoch %d from %s" % (save_state['epoch'], checkpoint_folder))
 
-        config = AdversarialPretrainerConfig.from_json_file(os.path.join(checkpoint_folder, "config.json"))
+        config = AdversarialPretrainerConfig.from_json_file(path.join(checkpoint_folder, "config.json"))
 
         # initialize new trainer
         model = arch(config)

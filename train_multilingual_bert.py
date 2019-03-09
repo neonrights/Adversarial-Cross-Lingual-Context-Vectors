@@ -16,7 +16,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # model parameters
-    parser.add_argument("--vocab_file", type=str, default="./example_data/bert-base-multilingual-cased-vocab.txt")
+    parser.add_argument("--vocab_file", type=str, default="./data/bert-base-multilingual-cased-vocab.txt")
     parser.add_argument("--hidden_size", type=int, default=768)
     parser.add_argument("--num_hidden_layers", type=int, default=12)
     parser.add_argument("--num_attention_heads", type=int, default=12)
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     parser.add_argument("--epochs", type=int, default=1000)
 
     # checkpoint parameters
-    parser.add_argument("--checkpoint_folder", type=str, default="./checkpoints/")
+    parser.add_argument("--checkpoint_folder", type=str, default="./axlm_checkpoints/")
     parser.add_argument("--restore_checkpoint", action="store_true")
     parser.add_argument("--checkpoint_frequency", type=int, default=10)
 

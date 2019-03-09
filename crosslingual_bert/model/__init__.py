@@ -1,1 +1,1 @@
-from .multilingual import MultilingualBert, MultilingualConfig
+from .multilingual import MultilingualBert, MultilingualTranslator, MultilingualConfig

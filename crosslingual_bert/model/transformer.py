@@ -30,7 +30,7 @@ from io import open
 
 import torch
 from torch import nn
-from torch.nn import CrossEntropyLoss
+import pdb
 
 
 def gelu(x):
@@ -231,7 +231,10 @@ class SelfAttention(nn.Module):
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
         # Apply the attention mask is (precomputed for all layers in Model forward() function)
-        attention_scores = attention_scores + attention_mask
+        try:
+            attention_scores = attention_scores + attention_mask
+        except RuntimeError:
+            pdb.set_trace()
 
         # Normalize the attention scores to probabilities.
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
@@ -511,7 +514,7 @@ class DecoderModel(TransformerModel):
         self.pooler = Pooler(config)
         self.apply(self.init_weights)
 
-    def forward(self, encoder_vectors, decoder_vectors, encoder_mask=None, decoder_mask=None, output_all_encoded_layers=True):
+    def forward(self, encoder_vectors, decoder_vectors, encoder_mask=None, decoder_mask=None, output_all_decoded_layers=True):
         if encoder_mask is None:
             encoder_mask = torch.ones(encoder_vectors.shape[:-1], dtype=torch.uint8)
         if decoder_mask is None:
@@ -522,8 +525,10 @@ class DecoderModel(TransformerModel):
         attention_mask = attention_mask.unsqueeze(1).to(dtype=next(self.parameters()).dtype)
         attention_mask = (1.0 - attention_mask) * -10000.0
 
-        all_decoder_layers = self.decoder(encoder_vectors, decoder_vectors, encoder_mask, decoder_mask)
-        sequence_output = all_decoder_layers[-1]
-        pooled_output = self.dropout(self.pooler(sequence_output))
-        logits = nn.LogSoftmax(dim=-1)(self.linear(pooled_output))
-        return logits
+        decoded_layers = self.decoder(encoder_vectors, decoder_vectors, attention_mask)
+        sequence_output = decoded_layers[-1]
+        pooled_output = self.pooler(sequence_output)
+        if not output_all_decoded_layers:
+            decoded_layers = decoded_layers[-1]
+        return decoded_layers, pooled_output
+

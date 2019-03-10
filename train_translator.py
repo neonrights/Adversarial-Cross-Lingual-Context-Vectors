@@ -134,13 +134,13 @@ if __name__ == '__main__':
             epoch += 1
             train_loss = trainer.train(epoch)
             test_loss = trainer.test(epoch)
-            trainer.save(checkpoint_file)
+            trainer.save(epoch, checkpoint_file)
             f.write("%d\t%.6f\t%.6f\n" % (epoch, train_loss, test_loss))
 
             if test_loss < best_loss:
                 best_epoch = epoch
                 best_loss = test_loss
-                trainer.save(best_model_file)
+                trainer.save(epoch, best_model_file)
             if epoch % 10 == 0:
-                trainer.save(save_epoch_file % epoch)
+                trainer.save(epoch, save_epoch_file % epoch)
 

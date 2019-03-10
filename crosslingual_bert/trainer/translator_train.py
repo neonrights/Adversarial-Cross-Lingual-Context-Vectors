@@ -1,6 +1,9 @@
 import os
-import os.path as path
 import six
+import json
+import copy
+from os import path
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -63,7 +66,9 @@ class TranslatorTrainerWrapper(nn.Module):
         _, pooled_output = self.translator_model(language, input_ids, target_ids, input_mask, target_mask)
         token_logits = self.word_prediction(pooled_output)
         token_loss = self.criterion(token_logits, token_labels)
-        return token_loss
+        correct = token_logits.argmax(-1).eq(token_labels).sum().item()
+        count = token_labels.nelement()
+        return token_loss, correct, count
 
 
 class TranslatorTrainer:
@@ -130,23 +135,22 @@ class TranslatorTrainer:
                 batch = {key: value.to(self.device) for key, value in batch.items()}
 
                 # calculate loss for specific language
-                loss = self.model(language, **batch)
+                loss, correct, count = self.model(language, **batch)
 
                 # 3. backward and optimization only in train
                 if train:
-                    self.optim.zero_grad()
+                    self.optimizer.zero_grad()
                     loss.backward()
-                    self.optim.step()
+                    self.optimizer.step()
 
                 # next sentence prediction accuracy
-                correct = predictions.argmax(dim=-1).eq(batch["labels"]).sum().detach().item()
-                total_loss += loss.detach().item()
+                total_loss += loss.item()
                 total_correct += correct
-                total_element += batch["labels"].detach().nelement()
+                total_element += count
 
-        avg_loss = total_loss / total_correct
-        print("EP%d_%s, avg_loss=" % (epoch, str_code), avg_loss / len(data_iter), "total_acc=",
-                total_correct / total_element)
+        avg_loss = total_loss / total_element
+        print("EP%d_%s, avg_loss=%.6f, total_acc=%.6f" %
+                (epoch, str_code, avg_loss, total_correct / total_element))
         return avg_loss
 
     def get_translator_model(self):
@@ -174,7 +178,7 @@ class TranslatorTrainer:
         with open(path.join(directory_path, "config.json"), 'w+') as f:
             f.write(self.config.to_json_string())
 
-        if isinstance(self.model, (nn.DataParallel, DistributedDataParallel)):
+        if isinstance(self.model, nn.DataParallel):
             model_state = self.model.module.cpu().state_dict()
             self.model.module.to(self.device)
         else:
@@ -203,7 +207,7 @@ class TranslatorTrainer:
         # initialize new trainer
         model = arch(config)
         trainer = cls(model, config, train_data, test_data)
-        if isinstance(trainer.model, (nn.DataParallel, DistributedDataParallel)):
+        if isinstance(trainer.model, nn.DataParallel):
             trainer.model.module.load_state_dict(save_state['model'])
         else:
             trainer.model.load_state_dict(save_state['model'])

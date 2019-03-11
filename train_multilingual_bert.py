@@ -35,10 +35,11 @@ if __name__ == '__main__':
     parser.add_argument("--adversary_batch_size", type=int, default=64)
     parser.add_argument("--sequence_length", type=int, default=192) # XNLI max sequence length with wordpiece tokenization is 167
     parser.add_argument("--adversary_repeat", type=int, default=5)
-    parser.add_argument("--learning_rate", type=float, default=None)
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--adversary_loss_weight", type=float, default=1e-4)
     parser.add_argument("--frobenius_loss_weight", type=float, default=1e-6)
     parser.add_argument("--epochs", type=int, default=1000)
+    parser.add_argument("--data_folder", type=str, default="./data/")
 
     # checkpoint parameters
     parser.add_argument("--checkpoint_folder", type=str, default="./axlm_checkpoints/")
@@ -51,10 +52,6 @@ if __name__ == '__main__':
     parser.add_argument("--batch_workers", type=int, default=0)
     parser.add_argument("--adversary_workers", type=int, default=0)
     parser.add_argument("--local_rank", type=int, default=None)
-
-    # special datasets
-    parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--small_dataset", action="store_true")
 
     args = parser.parse_args()
 
@@ -100,20 +97,11 @@ if __name__ == '__main__':
     )
 
     # load datasets
-    if args.debug:
-        train_files = [('ar', "./example_data/ar/"), ('bg', "./example_data/bg/"),
-                ('de', "./example_data/de/"), ('en', "./example_data/en/")]
-        adversary_file = "./example_data/"
-        test_files = [('ar', "./example_data/ar/"), ('bg', "./example_data/bg/"),
-                ('de', "./example_data/de/"), ('en', "./example_data/en/")]
-    elif args.small_dataset:
-        train_files = [(language, "./data/train_/%s/" % language) for language in args.languages]
-        adversary_file = "./data/train_/"
-        test_files = [(language, "./data/test_/%s/" % language) for language in args.languages]
-    else:
-        train_files = [(language, "./data/train/%s/" % language) for language in args.languages]
-        adversary_file = "./data/train/"
-        test_files = [(language, "./data/test/%s/" % language) for language in args.languages]
+    train_data_str = path.join(args.data_folder, "train/%s/")
+    test_data_str = path.join(args.data_folder, "test/%s/")
+    train_files = [(language, train_data_str % language) for language in args.languages]
+    adversary_file = path.join(ags.data_folder, "train")
+    test_files = [(language, test_data_str % language) for language in args.languages]
 
     language_class = LanguageMemoryDataset if args.on_memory else LanguageDataset
     dicriminator_class = DiscriminatorMemoryDataset if args.on_memory else DiscriminatorDataset
@@ -218,5 +206,4 @@ if __name__ == '__main__':
             epoch += 1
             train_loss = trainer.train(epoch)
             test_loss = trainer.test(epoch)
-
 

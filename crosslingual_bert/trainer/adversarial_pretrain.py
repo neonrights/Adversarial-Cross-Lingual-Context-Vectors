@@ -9,9 +9,12 @@ from os import path
 from collections import OrderedDict
 from itertools import chain
 from torch.utils.data import DataLoader
-from apex.parallel import DistributedDataParallel
+try:
+    from apex.parallel import DistributedDataParallel
+except ImportError:
+    from torch.nn.parallel import DistributedDataParallel
 
-from .optimization import Adafactor
+from .optimization import BertAdam
 from .utils import *
 
 import tqdm
@@ -231,11 +234,11 @@ class AdversarialPretrainer:
 
         # initialize optimizers
         if parallelize:
-            self.D_optim = Adafactor(self.model.module.component_parameters("adversary"), config.lr)
-            self.lm_optims = Adafactor(self.model.module.component_parameters(), config.lr)
+            self.D_optim = BertAdam(self.model.module.component_parameters("adversary"), config.lr)
+            self.lm_optims = BertAdam(self.model.module.component_parameters(), config.lr)
         else:
-            self.D_optim = Adafactor(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
-            self.lm_optims = Adafactor(self.model.component_parameters(), config.lr)
+            self.D_optim = BertAdam(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
+            self.lm_optims = BertAdam(self.model.component_parameters(), config.lr)
 
         # hyperparameters for loss
         self.beta = config.beta
@@ -482,8 +485,8 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self.D_repeat = config.adv_repeat
 
         # initialize optimizers
-        self.D_optim = Adafactor(self.model.module.component_parameters("adversary"), config.lr)
-        self.lm_optims = Adafactor(self.model.module.component_parameters(), config.lr)
+        self.D_optim = BertAdam(self.model.module.component_parameters("adversary"), config.lr)
+        self.lm_optims = BertAdam(self.model.module.component_parameters(), config.lr)
 
         # hyperparameters for loss
         self.beta = config.beta

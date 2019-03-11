@@ -498,4 +498,3 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self._config = config # for checkpointing
         self.position = position
         self.seed = seed
-

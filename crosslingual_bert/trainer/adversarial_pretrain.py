@@ -269,7 +269,8 @@ class AdversarialPretrainer:
         return self.iteration(epoch, self.train_data)
 
     def test(self, epoch):
-        return self.iteration(epoch, self.test_data, train=False)
+        with torch.no_grad():
+            return self.iteration(epoch, self.test_data, train=False)
 
     def iteration(self, epoch, data, train=True):
         """
@@ -364,7 +365,7 @@ class AdversarialPretrainer:
         averages["mask_acc"] = stats["mask_correct"] / stats["mask_elements"]
 
         print("EP%d_%s" % (epoch, str_code))
-        print(json.dumps(averages, index=1))
+        print({k: round(v,6) for k, v in averages.items()})
         return averages
 
     def get_multilingual_model(self):

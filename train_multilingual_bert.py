@@ -1,10 +1,11 @@
 import os
-import os.path as path
+import json
 import argparse
+from os import path
+
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-
 from torch.utils.data import DataLoader, DistributedSampler
 
 from crosslingual_bert.dataset import BertTokenizer, LanguageDataset, LanguageMemoryDataset, DiscriminatorDataset, DiscriminatorMemoryDataset
@@ -35,10 +36,12 @@ if __name__ == '__main__':
     parser.add_argument("--adversary_batch_size", type=int, default=64)
     parser.add_argument("--sequence_length", type=int, default=192) # XNLI max sequence length with wordpiece tokenization is 167
     parser.add_argument("--adversary_repeat", type=int, default=5)
-    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    parser.add_argument("--learning_rate", type=float, default=1e-3)
     parser.add_argument("--adversary_weight", type=float, default=1e-4)
     parser.add_argument("--frobenius_weight", type=float, default=1e-6)
     parser.add_argument("--epochs", type=int, default=1000)
+
+    # dataset selection
     parser.add_argument("--train_folder", type=str, default="./data/train_/")
     parser.add_argument("--test_folder", type=str, default="./data/test_/")
 

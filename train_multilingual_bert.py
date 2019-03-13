@@ -2,6 +2,7 @@ import os
 import json
 import argparse
 from os import path
+from random import shuffle
 
 import torch
 import torch.distributed as dist
@@ -86,7 +87,7 @@ if __name__ == '__main__':
         type_vocab_size=args.type_vocab_size,
         initializer_range=args.initializer_range,
     )
-    model = MultilingualBert(model_config)
+    model = MultilingualBert(model_config).cuda()
 
     trainer_config = AdversarialPretrainerConfig(
         model_config=model_config,
@@ -106,6 +107,8 @@ if __name__ == '__main__':
     train_files = [(language, train_data_str % language) for language in args.languages]
     adversary_file = path.join(args.train_folder)
     test_files = [(language, test_data_str % language) for language in args.languages]
+    shuffle(train_files)
+    shuffle(test_files)
 
     language_class = LanguageMemoryDataset if args.on_memory else LanguageDataset
     dicriminator_class = DiscriminatorMemoryDataset if args.on_memory else DiscriminatorDataset
@@ -127,13 +130,13 @@ if __name__ == '__main__':
         adversary_sampler = None
         test_raw = [(language, dataset, None) for language, dataset in test_raw]
 
-    train_data = {language: DataLoader(dataset, batch_size=args.batch_size, sampler=sampler,
-                    num_workers=args.batch_workers, drop_last=True, pin_memory=args.enable_cuda)
+    train_data = {language: DataLoader(dataset, batch_size=args.batch_size, shuffle=args.local_rank is None,
+                    sampler=sampler, num_workers=args.batch_workers, drop_last=True, pin_memory=args.enable_cuda)
             for language, dataset, sampler in train_raw}
-    train_data["adversary"] = DataLoader(adversary_raw, batch_size=args.adversary_batch_size, sampler=adversary_sampler,
-            num_workers=args.adversary_workers, pin_memory=args.enable_cuda)
-    test_data = {language: DataLoader(dataset, batch_size=args.batch_size, sampler=sampler,
-                    num_workers=args.batch_workers, drop_last=True, pin_memory=args.enable_cuda)
+    train_data["adversary"] = DataLoader(adversary_raw, batch_size=args.adversary_batch_size, shuffle=args.local_rank is None,
+            sampler=adversary_sampler, num_workers=args.adversary_workers, pin_memory=args.enable_cuda)
+    test_data = {language: DataLoader(dataset, batch_size=args.batch_size, shuffle=args.local_rank is None,
+                    sampler=sampler, num_workers=args.batch_workers, drop_last=True, pin_memory=args.enable_cuda)
             for language, dataset, sampler in test_raw}
 
     if not args.local_rank:

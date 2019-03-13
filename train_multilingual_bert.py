@@ -17,10 +17,10 @@ if __name__ == '__main__':
 
     # model parameters
     parser.add_argument("--vocab_file", type=str, default="./data/bert-base-multilingual-cased-vocab.txt")
-    parser.add_argument("--hidden_size", type=int, default=768)
+    parser.add_argument("--hidden_size", type=int, default=192)
     parser.add_argument("--num_hidden_layers", type=int, default=12)
     parser.add_argument("--num_attention_heads", type=int, default=12)
-    parser.add_argument("--intermediate_size", type=int, default=3072)
+    parser.add_argument("--intermediate_size", type=int, default=768)
     parser.add_argument("--hidden_act", type=str, default="gelu")
     parser.add_argument("--hidden_dropout_prob", type=float, default=0.1)
     parser.add_argument("--attention_dropout_prob", type=float, default=0.1)
@@ -36,8 +36,8 @@ if __name__ == '__main__':
     parser.add_argument("--sequence_length", type=int, default=192) # XNLI max sequence length with wordpiece tokenization is 167
     parser.add_argument("--adversary_repeat", type=int, default=5)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
-    parser.add_argument("--adversary_loss_weight", type=float, default=1e-4)
-    parser.add_argument("--frobenius_loss_weight", type=float, default=1e-6)
+    parser.add_argument("--adversary_weight", type=float, default=1e-4)
+    parser.add_argument("--frobenius_weight", type=float, default=1e-6)
     parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--train_folder", type=str, default="./data/train_/")
     parser.add_argument("--test_folder", type=str, default="./data/test_/")
@@ -90,8 +90,8 @@ if __name__ == '__main__':
         language_ids=ltoi,
         adv_repeat=args.adversary_repeat,
         lr=args.learning_rate,
-        beta=args.adversary_loss_weight,
-        gamma=args.frobenius_loss_weight,
+        beta=args.adversary_weight,
+        gamma=args.frobenius_weight,
         with_cuda=args.enable_cuda,
         train_freq=args.train_step,
         gpu_id=args.local_rank
@@ -151,10 +151,11 @@ if __name__ == '__main__':
 
         best_epoch = 0
         best_loss = 1e9
-        for line in lines[1:]: # skip column names
-            epoch, _, test_loss = line.strip().split('\t')
+        for line in lines: # skip column names
+            epoch, _, test_stats = line.strip().split('\t')
             epoch = int(epoch)
-            test_loss = float(test_loss)
+            test_stats = json.loads(test_stats)
+            test_loss = float(test_stats["loss"])
             if test_loss < best_loss:
                 best_epoch = epoch
                 best_loss = test_loss
@@ -180,31 +181,30 @@ if __name__ == '__main__':
     save_epoch_file = path.join(args.checkpoint_folder, "epoch.%d.state")
     if not args.local_rank:
         with open(loss_log, 'w+' if start == 0 else 'a') as f:
-            if start == 0:
-                f.write('epoch\ttrain\ttest\n')
-
             for epoch in range(start, args.epochs):
                 epoch += 1
-                train_loss = trainer.train(epoch)
-                test_loss = trainer.test(epoch)
+                train_stats = trainer.train(epoch)
+                test_stats = trainer.test(epoch)
 
-                f.write("%d\t%.6f\t%.6f\n" % (epoch, train_loss, test_loss))
+                # write loss and accuracy statistics to file
+                f.write("%d\t%s\t%s\n" % (epoch,
+                        json.dumps(train_stats), json.dumps(test_stats)))
                 trainer.save(epoch, checkpoint_file)
 
                 if epoch % args.checkpoint_frequency == 0:
                     trainer.save(epoch, save_epoch_file % epoch)
 
-                if test_loss < best_loss:
-                    best_loss = test_loss
+                if test_stats["loss"] < best_loss:
+                    best_loss = test_stats["loss"]
                     best_epoch = epoch
                     trainer.save(epoch, best_model_file)
 
-                print("test loss %.6f" % test_loss)
+                print("test loss %.6f" % test_stats["loss"])
 
         print("best loss %f at epoch %d" % (best_loss, best_epoch))
     else:
         for epoch in range(start, args.epochs):
             epoch += 1
-            train_loss = trainer.train(epoch)
-            test_loss = trainer.test(epoch)
+            trainer.train(epoch)
+            trainer.test(epoch)
 

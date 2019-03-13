@@ -2,11 +2,13 @@ import os
 import copy
 import json
 import six
+import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from os import path
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 from itertools import chain
 from torch.utils.data import DataLoader
 try:
@@ -117,6 +119,16 @@ class SimpleAdversary(nn.Module):
         return self.softmax(self.linear(inputs))
 
 
+def UniformKLDivergence(scores, dim=-1):
+    """Computes KL divergence from a uniform distribution.  If loss = KL(P || Q),
+    then P(x) is a uniform distribution and Q is the log softmax of the scores.
+    """
+    uniform_log_prob = -torch.tensor(math.log(scores.size(dim)))
+    kl_div = uniform_log_prob - F.log_softmax(scores, dim=dim).mean(dim)
+    kl_loss = kl_div.sum()
+    return kl_loss
+
+
 class AdversarialBertWrapper(nn.Module):
     """
     adds pretraining tasks to entire multilingual model
@@ -142,8 +154,9 @@ class AdversarialBertWrapper(nn.Module):
                 is_next=None):
         if component == 'adversary':
             # return logits for adversarial language prediction
-            embeddings = self.multilingual_model.embeddings(input_ids)
-            _, pooled_vectors = self.multilingual_model.shared(embeddings, attention_mask=mask)
+            with torch.no_grad():
+                embeddings = self.multilingual_model.embeddings(input_ids)
+                _, pooled_vectors = self.multilingual_model.shared(embeddings, attention_mask=mask)
             language_logits = self.adversary_model(pooled_vectors)
             language_loss = self.criterion(language_logits, language_labels)
             return language_loss, language_logits
@@ -162,8 +175,9 @@ class AdversarialBertWrapper(nn.Module):
             # adversarial prediction loss
             hidden_dim = hidden_vectors[-1].size(-1)
             public_pooled, _ = torch.split(pooled_vectors, hidden_dim // 2, -1)
-            language_logits = self.adversary_model(public_pooled)
-            adv_loss = -self.criterion(language_logits, language_labels)
+            with torch.no_grad():
+                language_logits = self.adversary_model(public_pooled)
+            adv_loss = UniformKLDivergence(language_logits)
 
             # public-private vector similarity loss
             public_vectors, private_vectors = torch.split(hidden_vectors[-1], hidden_dim // 2, -1)
@@ -313,15 +327,7 @@ class AdversarialPretrainer:
                 total=len(language_iter),
                 position=self.position)
 
-        total_mask_loss = 0.
-        total_next_loss = 0.
-        total_adv_loss = 0.
-        total_diff_loss = 0.
-        total_loss = 0.
-
-        total_mask_correct = 0.
-        total_mask_elements = 0.
-        total_next_acc = 0.
+        stats = Counter()
         for i, (language, batch) in language_iter:
             # accumulate gradients if necessary
             if train and i % self.train_freq == 0:
@@ -343,36 +349,23 @@ class AdversarialPretrainer:
                 loss.backward()
 
             # record loss and accuracy statistics
-            total_loss += loss.item()
-            
-            # individual loss statistics
-            total_mask_loss += output["mask_loss"].item()
-            total_next_loss += output["next_loss"].item()
-            total_adv_loss += output["adv_loss"].item()
-            total_diff_loss += output["diff_loss"].item()
-            
-            # batch accuracy statistics
-            total_mask_correct += output["mask_correct"].item()
-            total_mask_elements += output["mask_elements"].item()
-            total_next_acc += output["next_acc"].item()
+            stats["loss"] += loss.item()
+            for key, value in output.items():
+                stats[key] += value.item()
 
             if train and (i + 1) % self.train_freq == 0:
                 self.lm_optims.step()
 
         # calculate avg loss and accuracy
-        total_batches = len(language_iter)
-        avg_loss = total_loss / total_batches
-        avg_mask_loss = total_mask_loss / total_batches
-        avg_next_loss = total_next_loss / total_batches
-        avg_adv_loss = self.beta * total_adv_loss / total_batches
-        avg_diff_loss = self.gamma * total_diff_loss  / total_batches
-        avg_mask_acc = total_mask_correct / total_mask_elements
-        avg_next_acc = total_next_acc / total_batches
+        averages = {}
+        for key, value in stats.items():
+            if key != "mask_correct" and key != "mask_elements":
+                averages[key] = value / len(language_iter)
+        averages["mask_acc"] = stats["mask_correct"] / stats["mask_elements"]
 
-        print("EP{0}_{1}:\nmask={2:.6f}\tnext={3:.6f}\tadv={4:.6f}\ndiff={5:.6f}\tmask_acc={6:.6f}\tnext_acc={7:.6f}".format(
-                epoch, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_mask_acc, avg_next_acc))
-
-        return avg_loss
+        print("EP%d_%s" % (epoch, str_code))
+        print(json.dumps(averages, index=1))
+        return averages
 
     def get_multilingual_model(self):
         return self.model.multilingual_model

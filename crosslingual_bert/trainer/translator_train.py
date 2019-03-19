@@ -56,29 +56,32 @@ class TranslatorTrainerConfig(object):
 
 
 class TranslatorTrainerWrapper(nn.Module):
-    def __init__(self, translator_model, config):
+    def __init__(self, axlm_model, translator_model, config):
         super().__init__()
+        self.axlm_model = axlm_model
         self.translator_model = translator_model
-        self.word_prediction = nn.Linear(config.hidden_size, config.vocab_size)
-        self.criterion = nn.NLLLoss()
+        self.target_language = config.target_language
+        self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, language, input_ids, target_ids, input_mask, target_mask, token_labels):
-        _, pooled_output = self.translator_model(language, input_ids, target_ids, input_mask, target_mask)
-        token_logits = self.word_prediction(pooled_output)
-        token_loss = self.criterion(token_logits, token_labels)
-        correct = token_logits.argmax(-1).eq(token_labels).sum().item()
+        with torch.no_grad():
+            input_vectors, _ = self.axlm_model(language, input_ids, attention_mask=input_mask)
+            target_vectors, _ = self.axlm_model(self.target_language, target_ids, attention_mask=target_mask)
+        token_scores = self.translator_model(input_vectors[-1], target_vectors[-1], input_mask, target_mask)
+        token_loss = self.criterion(token_scores, token_labels)
+        correct = token_scores.argmax(-1).eq(token_labels).sum().item()
         count = token_labels.nelement()
         return token_loss, correct, count
 
 
 class TranslatorTrainer:
-    def __init__(self, translator_model, config, train_data, test_data=None, with_cuda=True):
+    def __init__(self, axlm_model, translator_model, config, train_data, test_data=None, with_cuda=True):
         # Setup cuda device for BERT training, argument -c, --cuda should be true
         cuda_condition = torch.cuda.is_available() and with_cuda
         self.device = torch.device("cuda:0" if cuda_condition else "cpu")
 
         # This BERT model will be saved every epoch
-        self.model = TranslatorTrainerWrapper(translator_model, config)
+        self.model = TranslatorTrainerWrapper(axlm_model, translator_model, config)
         self.languages = config.languages
         self.target_language = config.target_language
         

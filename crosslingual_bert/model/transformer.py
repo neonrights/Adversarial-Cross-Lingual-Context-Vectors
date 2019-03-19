@@ -30,7 +30,6 @@ from io import open
 
 import torch
 from torch import nn
-import pdb
 
 
 def gelu(x):
@@ -230,11 +229,8 @@ class SelfAttention(nn.Module):
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
-        # Apply the attention mask is (precomputed for all layers in Model forward() function)
-        try:
-            attention_scores = attention_scores + attention_mask
-        except RuntimeError:
-            pdb.set_trace()
+        # Apply the attention mask is (precomputed for all layers in Model forward() function
+        attention_scores = attention_scores + attention_mask
 
         # Normalize the attention scores to probabilities.
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
@@ -479,8 +475,8 @@ class EncoderModel(TransformerModel):
 
     def forward(self, input_vectors, attention_mask=None, output_all_encoded_layers=True):
         if attention_mask is None:
-            attention_mask = torch.ones(input_vectors.shape[:2], dtype=torch.long)
-            attention_mask.to(input_vectors.get_device())
+            attention_mask = torch.ones(input_vectors.shape[:2], dtype=torch.uint8)
+            attention_mask = attention_mask.to(input_vectors.get_device())
 
         # We create a 3D attention mask from a 2D tensor mask.
         # Sizes are [batch_size, 1, 1, to_seq_length]
@@ -517,9 +513,11 @@ class DecoderModel(TransformerModel):
     def forward(self, encoder_vectors, decoder_vectors, encoder_mask=None, decoder_mask=None, output_all_decoded_layers=True):
         if encoder_mask is None:
             encoder_mask = torch.ones(encoder_vectors.shape[:-1], dtype=torch.uint8)
+            encoder_mask = encoder_mask.to(encoder_vectors.get_device())
         if decoder_mask is None:
             decoder_mask = torch.ones(decoder_vectors.shape[:-1], dtype=torch.uint8)
-        
+            decoder_mask = decoder_mask.to(decoder_vectors.get_device())
+
         # combine masks for each sequence into single attention mask matrix
         attention_mask = decoder_mask.unsqueeze(1) & encoder_mask.unsqueeze(2)
         attention_mask = attention_mask.unsqueeze(1).to(dtype=next(self.parameters()).dtype)

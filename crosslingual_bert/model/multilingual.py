@@ -61,21 +61,16 @@ class MultilingualTranslator(nn.Module):
     """
     Universal to target language translation model using transformer architecture
     """
-    def __init__(self, model: MultilingualBert, config: MultilingualConfig):
-        assert config.target_language in model.private
+    def __init__(self, config: MultilingualConfig):
         super().__init__()
         self.config = config
-        self.multilingual_model = model.eval()
-        for p in self.multilingual_model.parameters():
-            p.requires_grad = False
-
         self.translator_model = DecoderModel(config)
-        self.target_language = config.target_language
+        self.token_prediction = nn.Linear(config.hidden_size, config.vocab_size)
 
-    def forward(self, language, input_ids, target_ids, input_mask=None, target_mask=None):
-        language_vectors, _ = self.multilingual_model(language, input_ids, attention_mask=input_mask)
-        target_vectors, _ = self.multilingual_model(self.target_language, target_ids, attention_mask=target_mask)
-        return self.translator_model(language_vectors[-1], target_vectors[-1], input_mask, target_mask)
+    def forward(self, input_vectors, target_vectors, input_mask=None, target_mask=None):
+        _, pooled_output = self.translator_model(input_vectors, target_vectors, input_mask, target_mask)
+        token_scores = self.token_prediction(pooled_output)
+        return token_scores
 
     def language_parameters(self, language):
         return chain(self.translator_model.parameters(), self.multilingual_model.language_parameters(language))

@@ -81,10 +81,16 @@ if __name__ == '__main__':
     tokenizer = BertTokenizer(args.vocab_file)
     train_files = [(language, "./example_data/sample.%s-%s.tsv" % (language, args.target_language))
             for language in args.languages]
+    test_files = [(language, "./data/raw data/XNLI-15way/xnli.15way.orig.tsv")
+            for language in args.languages]
     train_raw = [(language, ParallelTrainDataset(file_path, tokenizer, args.sequence_length, language, args.target_language))
             for language, file_path in train_files]
+    test_raw = [(language, ParallelTrainDataset(file_path, tokenizer, args.sequence_length, language, args.target_language))
+            for language, file_path in test_files]
     train_data = {language: DataLoader(dataset, batch_size=args.batch_size, num_workers=args.batch_workers, pin_memory=args.enable_cuda)
             for language, dataset in train_raw}
+    test_data = {language: DataLoader(dataset, batch_size=args.batch_size, num_workers=args.batch_workers, pin_memory=args.enable_cuda)
+            for language, dataset in test_raw}
 
     # initialize trainer and model
     loss_log = path.join(args.checkpoint_folder, "loss.tsv")
@@ -108,10 +114,10 @@ if __name__ == '__main__':
 
         # try restoring from checkpoint
         trainer, start = TranslatorTrainer.load_checkpoint(args.checkpoint_folder,
-                MultilingualTranslator, train_data, train_data)
+                MultilingualTranslator, train_data, test_data)
     except FileNotFoundError:
-        translator_model = MultilingualTranslator(axlm_model, translator_config)
-        trainer = TranslatorTrainer(translator_model, trainer_config, train_data, train_data)
+        translator_model = MultilingualTranslator(translator_config)
+        trainer = TranslatorTrainer(axlm_model, translator_model, trainer_config, train_data, train_data)
         start = 0
         best_epoch = 0
         best_loss = 1e9

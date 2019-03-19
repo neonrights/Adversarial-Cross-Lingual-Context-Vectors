@@ -10,13 +10,13 @@ import torch.nn.functional as F
 from os import path
 from collections import OrderedDict, Counter
 from itertools import chain
-from torch.utils.data import DataLoader
+from torch.optim import Adam
 try:
     from apex.parallel import DistributedDataParallel
 except ImportError:
     from torch.nn.parallel import DistributedDataParallel
 
-from .optimization import BertAdam
+from .optimization import Adafactor
 from .utils import *
 
 import tqdm
@@ -141,8 +141,8 @@ class AdversarialBertWrapper(nn.Module):
         self.next_model = NextSentencePrediction(config.hidden_size*2)
 
         # loss calculation
-        self.criterion = nn.NLLLoss()
-        self.mask_criterion = nn.NLLLoss(ignore_index=0)
+        self.criterion = nn.CrossEntropyLoss()
+        self.mask_criterion = nn.CrossEntropyLoss(ignore_index=0)
 
     def forward(self,
                 component,
@@ -248,11 +248,11 @@ class AdversarialPretrainer:
 
         # initialize optimizers
         if parallelize:
-            self.D_optim = BertAdam(self.model.module.component_parameters("adversary"), config.lr)
-            self.lm_optims = BertAdam(self.model.module.component_parameters(), config.lr)
+            self.D_optim = Adam(self.model.module.component_parameters("adversary"), config.lr)
+            self.lm_optims = Adafactor(self.model.module.component_parameters(), config.lr)
         else:
-            self.D_optim = BertAdam(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
-            self.lm_optims = BertAdam(self.model.component_parameters(), config.lr)
+            self.D_optim = Adam(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
+            self.lm_optims = Adafactor(self.model.component_parameters(), config.lr)
 
         # hyperparameters for loss
         self.beta = config.beta
@@ -356,6 +356,9 @@ class AdversarialPretrainer:
 
             if train and (i + 1) % self.train_freq == 0:
                 self.lm_optims.step()
+
+        if train and (i + 1) % self.train_freq != 0:
+            self.lm_optims.step()
 
         # calculate avg loss and accuracy
         averages = {}

@@ -171,13 +171,13 @@ class BertEmbeddings(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # initialize position embeddings
-        self.position_embeddings.weight.requires_grad = False
-        for pos in range(config.max_position_embeddings):
-            for i in range(0, config.hidden_size, 2):
-                self.position_embeddings.weight[pos, i] =\
-                        math.sin(pos / (10000 ** ((2 * i)/config.hidden_size)))
-                self.position_embeddings.weight[pos, i+1] =\
-                        math.cos(pos / (10000 ** ((2 * i + 1)/config.hidden_size)))
+        # self.position_embeddings.weight.requires_grad = False
+        # for pos in range(config.max_position_embeddings):
+        #     for i in range(0, config.hidden_size, 2):
+        #         self.position_embeddings.weight[pos, i] =\
+        #                 math.sin(pos / (10000 ** ((2 * i)/config.hidden_size)))
+        #         self.position_embeddings.weight[pos, i+1] =\
+        #                 math.cos(pos / (10000 ** ((2 * i + 1)/config.hidden_size)))
 
     def forward(self, input_ids, token_type_ids=None):
         seq_length = input_ids.size(1)
@@ -379,7 +379,7 @@ class TransformerModel(nn.Module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            nn.init.xavier_uniform_(module.weight)
         elif isinstance(module, LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)

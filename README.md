@@ -8,16 +8,14 @@ CPU and single GPU training only require packages in ```requirements.txt```.  Di
 
 NVIDIA Apex <https://github.com/NVIDIA/apex/> (note install with ```--cuda_ext``` flag to enable needed cuda support)
 
-## Usage
-
-### Pretraining
+## Pretraining
 Pre-training is executed by running the command ```python train_multilingual_bert.py [--help] [ARGS]```.  Training can be parallelized through the use of pytorch's distributed launch, e.g. ```python -m torch.distributed.launch --nproc_per_node=N train_multilingual_bert.py [ARGS]```.
 
 Pretraining consists of first training the adversary for a set number of cycles before then training a batch for each language model in a round-robin fashion.  Each language model is trained using BERT's pretraining task and is optimized using a weighted sum of BERT's task specific losses, adversary prediction loss, and the squared Frobenius distance between shared and private features.
 
 Pretraining is performed by using the class **AdversarialPretrainer** implemented in the *trainers* folder.
 
-#### Data
+### Pretraining Data
 Each sample should be contained within its own document, with each sentence occupying its own line.  Since pretraining involves determining if a sequence of sentences follows another sequence, preferably each sample should contain at least two sentences.  Samples that do not are ignored when loading datsets.
 
 ```txt
@@ -46,12 +44,12 @@ The adversary uses a separate dataset during training implemented by the class *
 
 Example dataset can be found in the folder *example_data*.
 
-### Translator Tuning and XNLI Evaluation
+## Translator Tuning and XNLI Evaluation
 Translator training is executed by running ```python train_translator.py [--help] [ARGS]```.
 
 Fine-tuning consists of training a transformer model on top of a pretrained model which performs universal translations to a target language.  In the case of the training script this is English.  The final model is then evaluated on the XNLI data set in order to produce a set of BLEU scores.
 
-#### Translator Data
+### Translator Data
 Translator data should be entered as a .tsv file, with the name of each language as the header for each column.
 
 ```tsv

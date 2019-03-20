@@ -1,4 +1,4 @@
-# Language Adversarial Training for Cross-lingual Contextualized Vectors
+# Adversarial Pretraining of Cross-Lingual Language Models
 
 ## Introduction
 Implementation of multi-task shared-private model in order to create context dependent cross-lingual representations of sentences.  Model jointly performs BERT's pretraining task for a set of languages and their corresponding corpora.  This is in addition to the probability of swapping an input token with the mask token or a random token.

@@ -1,4 +1,4 @@
-\documentclass[12pt,letterpaper]{article}
+\documentclass[12pt,letterpaper,twocolumn]{article}
 \usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
 \usepackage{amsmath}
@@ -6,62 +6,145 @@
 \usepackage{amssymb}
 \usepackage{graphicx}
 \usepackage[margin=1in]{geometry}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{subcaption}
 \usepackage{lipsum}
-\usepackage{multicol}
 
-\title{Adversarial Cross-lingual Context Vectors}
-\author{Nicholas Farn}
-\date{\today}
+\title{Adversarial Cross-lingual Language Models}
+\author{Farn, Nicholas\\
+	\texttt{Department of Computer Science,}\\
+	\texttt{University of California, Los Angeles}\\
+	\texttt{nfarn@cs.ucla.edu}
+}
 
 \begin{document}
 \maketitle
 \begin{abstract}
-	\lipsum[1]
+Write after everything else
 \end{abstract}
 
-\begin{multicols}{2}
 \section{Introduction}
-\lipsum[1]
+Many natural language processing tasks commonly make use of pre-trained models, such as word embeddings, to much success \cite{}.  Such pre-trained models often create a vector representation of words that impart some meaning in relation to vector representations of other words within the same language.  Recently, such models have shown great improvement beyond state-of-the-art through unsupervised training of deep language models \cite{bert, openai, elmo}.  These generate word embeddings altered to take in the surrounding context of the sentence it is in.  However, most models training tasks are designed to model a single language, and thus similar words and sentences in different languages can have vastly different representations.  Aligning sentences using bilingual corpora can take a vast amount of samples.  This is on top of the many samples needed in order to produce good representations in a given language.  For lower resource languages such as Swahili or Urdu, this can pose a problem.  
 
-\section{Previous Work}
-\lipsum[1]
+There has been previous success in jointly training multiple tasks with similar tasks on a single model.
+
+\section{Related Work}
+Facebook stop stealing my research :P
 
 \section{Model}
-The cross-lingual model consists of using a transformer architecture on the shared-private multi-task model architecture like in Chen et al.  This consists of a shared transformer for every language along with private transformers for each individual language.
+Like previous models, the adversarial crosslingual language model (AXLM) operates by producing word embeddings for each token in an input sentence or sequence of sentences \cite{bert, openai, elmo, xlm}.  Word embeddings are produced for a specific input language by concatenating the outputs of two language models, one shared between all languages and one unique to the input language.  Given $L$ languages, such a model ends up jointly training $L+1$ language models.  This multi-task set-up is commonly referred to as a shared-private encoder \cite{Chen16}.  The goal of using such an architecture is to leverage data for higher resource languages to learn useful features for lower resource languages.  The model is split into shared and private components in order to prevent competition for model parameters between languages.  An adversarial component is added in order to encourage similar representation between languages as well.
 
-The BERT model implementation is taken from a repository verified to reproduce the same results as the original paper.  Additional fragments of code such as the vocab class are taken from another repository implementing BERT.
+% image showing example of network
 
-I implemented the shared-private model, which encapsulates a BERT transformer model and outputs context vectors for a specific language given input token ids.  Tokens across languages are shared in a single multilingual vocabulary.
+\subsection{Language Model}
+AXLM uses a transformer architecture on the shared-private architecture.  The transformer is trained on monolingual data using the same input and prediction tasks as BERT.  Input to BERT consists of first tokenizing sentences using WordPiece tokenization, the prepending and appending a [CLS] and [SEP] token to the sentence respectively.  BERT training consists of two tasks prediction:
 
-\subsection{BERT and ELMO}
-\lipsum[1]
+\begin{itemize}
+	\item Masked token prediction.  Given a sequence of tokens, $(t_1, t_2, t_3, \dots)$, a given token, $t_i$, is chosen to be replaced with a special ``mask'' token with a probability of 15\%.  The language model is then trained to predict the masked word.  Since the mask token is never seen in downstream tasks, it is replaced with a random word 10\% of the time, the original word is kept another 10\% of the time, and the mask token is used for the remaining 80\%.
+
+	\item Next sentence prediction.  The model is given two sentences which are concatenated together.  50\% of the time, the second sentence is an actual sentence which follows the first.  The other 50\% it is a sentence randomly drawn from the corpus.  In order to aid the language model, the sentences are separated by a [SEP] token.  Each sentence is also given a special segment embedding, with each token in the first sentence given a first sentence segment embedding and each token in the second receiving a corresponding second sentence segment embedding.
+\end{itemize}
+
+During training the loss from each task is simply added together.  In addition to segment embeddings, BERT also makes use of positional and multilingual Word-piece embeddings \cite{}.  For AXLM, these embeddings are shared between all private and shared components.
+
+% picture of embedding setup
 
 \subsection{Shared-Private Model}
-\lipsum[1]
+In addition to the loss from BERT's prediction tasks, AXLM is also subjected to an adversarial and Frobenius loss.  Since the shared language model is the same for all languages, it is encouraged to learn language agnostic.  This is accomplished by training an adversarial discriminator to predict the language an input sentence belongs.  The discriminator is defined as a simple prediction layer which is fed the pooled output of the shared model.
+
+$$D(x_{pooled}) = softmax(W x_{pooled} + b)$$
+
+The shared language model is then trained to confuse the discriminator.
+
+$$\mathcal{L}_{adv} = \min_\theta \left( \max_\theta ( \sum_{k=1}^K \sum_{i=1}^N d_i^k \log [D(E(s))] ) \right)$$
+
+Where $E$ and $D$ refer to the AXLM encoder and discriminator respectively.  In order to encourage each language's private models to learn language specific features, the squared Frobenius loss is taken between the output vectors of a language's private and shared components.
+
+$$\mathcal{L}_{diff} = \sum_{k=1}^K \lVert {H_s^k}^T H_p^k \rVert_F^2$$
+
+This penalizes the shared and private components for learning features which are not orthogonal to one another.  The final resultant loss is a weighted combination of the training task, adversarial, and squared Frobenius loss.
+
+$$\mathcal{L} = \mathcal{L}_{mask} + \mathcal{L}_{next} + \beta \mathcal{L}_{adv} + \gamma \mathcal{L}_{diff}$$
+
+Where $\beta$ and $\gamma$ are hand-tuned hyperparameters.  These are chosen to be in the range of 1e-2 to 1e-6.
 
 \section{Training}
-I also implemented a potential pretraining algorithm which consists of training an adversary to recognize the language an output representation belongs to, then performing a modified version of BERT’s prediction tasks for each language.
+AXLM was trained using data drawn from Wikipedia articles using WikiExtractor\footnote{https://github.com/attardi/wikiextractor} and the OpenSubtitles corpus available on OPUS\footnote{http://opus.nlpl.eu/}.  In order to generate training samples, long sequences of sentences are randomly sampled from contiguous text from the corpora.  When generating a single batch, samples are drawn from all languages.  A sample is chosen to be from a given language $L$ with probability $\Pr\{L\}$, total samples from $L$ out of all samples, downsampled by some factor $F$ which is then normalized.  When $F < 1$, this results in higher resource languages being downsampled, giving more attention to lower resource languages.  There is a uniform probability of drawing a sample from a given language in order to ensure all samples are seen \cite{}.
 
-BERT’s pre-training consists of two tasks: predicting the correct token for randomly masked tokens in a sequence and predicting whether a given sentence follows a given sentence.  The first task is generated by having a probability of a masked token either being masked, replaced with a random token, or kept the same.  I modified the algorithm to include a probability of replacing a given token with a context equivalent token in another language. This should hopefully encourage similar representations across different languages though I do not currently have empirical evidence.  This also requires the use of token-aligned parallel corpus.
+Before training the shared and private language models, the discriminator is first trained for several iterations in order to provide a more robust adversary.  More details about implementation specifics can be viewed in the appendix.  Due to a lack of resources, each language model was initialized using the weights from a pretrained pytorch implementation of multilingual BERT\footnote{https://github.com/huggingface/pytorch-pretrained-BERT}\footnote{https://github.com/codertimo/BERT-pytorch}.
 
-Each language specific model is also trained to confuse an adversary while also minimizing the squared frobenius loss between its shared and private vectors.  Thus the total loss is a combination of the prediction loss from BERT’s tasks plus the adversary’s prediction loss and frobenius loss.  The latter two losses are weighted through the beta and gamma hyperparameters.
-
-$language_loss = mask_loss + is_next_loss + beta * adversary_loss + gamma * frobenius_loss$
+Due to the already large size of BERT, AXLM is even larger, and grows linearly in size with number of languages considered.  However, this is not a problem during forward and backward propagation since only the shared and a single private language model are used at a time.  However, depending on the optimizer used, the linear increase in weights can lead to hefty memory costs when using optimizers such as Adam which uses twice as much memory as the model weights.  For this reason Adafactor was used instead \cite{}.  Best settings used during optimization.  Any kind of corrections used as well.
 
 \section{Evaluation}
-Like BERT, training data consists of long sequences of sentences drawn from texts such as news articles or books.  Samples sequences are drawn for each language from a set of corpora belonging to the specified language, creating a training set for each language.  If the corpus a sample is drawn from consists of parallel texts, the accompanying translation for a sequence is included in the sample as well.  In addition to drawing samples for each language, samples are drawn from all corpora across all languages in order to create a training set for the adversary.
 
-\subsection{XNLI}
-\lipsum[1]
+After pretraining, AXLM was tuned for a translation task.  Its performance is evaluated through the use of the XNLI dataset \cite{}.  Due to the larger number of parameters available to AXLM compared to other competing crosslingual language models, the shared language model was separated and its performance evaluated by itself as well.  Several smaller models were also developed to provide guidance on the choice of setting $\beta$ and $\gamma$, whose results will be discussed.
 
-\subsection{Results}
+It is currently impossible to train a full-sized model on the scale of BERT or ELMo that uses all 15 languages available in the XNLI dataset.  Due to the linear increase in model parameters per language and an 11 GB limitation per GPU, it is currently impossible to fit the minimum batch size into memory.  Using only Arabic, Bulgarian, German, and English, it takes approximately a week and a half to fully train a model on <1\% of available data using pre-trained BERT weights as a warm initialization.  Instead a severely reduced model is used instead for testing and evaluation.
+
+Due to a lack of sufficient data, urdu was also not considered.
+
+\begin{table*}[!t]
+	\begin{subtable}{1\textwidth}
+	\centering
+	\begin{tabular}{c|cccc}
+		model & hidden & intermediate & attention layers & total parameters \\
+		\hline
+		Bert-Base & 768 & 3072 & 12 & 110 million \\
+		Bert-Full & 1024 & 4096 & 24 & 340 million \\
+		AXLM-Reduced & 192 & 768 & 12 & 98 million \\
+		AXLM-Full & 768 & 3072 & 12 & 1.4 billion \\
+		\hline
+	\end{tabular}
+	\caption{table for model hyperparameters}
+	\end{subtable}
+	\bigskip
+	\begin{subtable}{1\textwidth}
+	\centering
+	\begin{tabular}{c|cccccccccccccc}
+		model & ar & bg & de & el & es & fr & hi & ru & sw & th & tr & ur & vi & zh \\
+		\hline
+		BERT & \\
+		XLM & \\ 
+		AXLM & \\
+	\end{tabular}
+	\caption{table for *-EN BLEU scores on XNLI dataset}
+	\end{subtable}
+\end{table*}
+
+\subsection{Results and Analysis}
+
 \lipsum[1]
 
 \section{Conclusion}
-\lipsum[1]
+
+\lipsum[2]
 
 \nocite{*}
 \bibliography{project_report}
 \bibliographystyle{plain}
-\end{multicols}
+
+\newpage
+\section{Implementation}
+pseudo-code for training and fine-tuning algorithms
+
+\begin{algorithm}
+	\caption{multilingual training of a shared-private language model}
+	\begin{algorithmic}
+		\For{$r \gets 1 \textrm{ to repeats}$}
+			\For{batch in datasets}
+				\State{Sample sentence input ids $X$ and language labels $y$}
+				\State{logits $\gets D(E(X))$}
+				\State{$\mathcal{L}_D \gets$ NLLLoss(logits, $y$)}
+				\State{Adafactor.update($\nabla\mathcal{L}_D$)}
+			\EndFor
+		\EndFor
+		\For{batch in datasets}
+			\State{Sample sentences}
+		\EndFor
+	\end{algorithmic}
+\end{algorithm}
+
+details of data generation and sampling
+details of devices used and time/epochs taken to train
 \end{document}

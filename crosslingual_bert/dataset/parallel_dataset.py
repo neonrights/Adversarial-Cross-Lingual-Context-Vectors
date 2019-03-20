@@ -36,7 +36,7 @@ class ParallelTrainDataset(ParallelDataset):
 	def _sentence_to_ids_and_label(self, sentence):
 		tokens = self.tokenizer.tokenize(sentence)
 		tokens = ['<S>'] + tokens + ['<T>']
-		split = random.randrange(1,min(len(tokens), self.seq_len))
+		split = random.randrange(1, min(len(tokens), self.seq_len))
 		ids = self.tokenizer.convert_tokens_to_ids(tokens[:split])
 		label = ids[-1]
 		ids = ids[:-1]
@@ -54,7 +54,7 @@ class ParallelTrainDataset(ParallelDataset):
 			'target_ids': target_ids,
 			'input_mask': input_mask,
 			'target_mask': target_mask,
-			'labels': label
+			'token_labels': label
 		}
 
 	def __len__(self):

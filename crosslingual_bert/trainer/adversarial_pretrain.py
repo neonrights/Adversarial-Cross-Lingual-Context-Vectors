@@ -2,12 +2,19 @@ import os
 import copy
 import json
 import six
+import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
+from os import path
+from collections import OrderedDict, Counter
 from itertools import chain
-from torch.utils.data import DataLoader
-from apex.parallel import DistributedDataParallel
+from torch.optim import Adam
+try:
+    from apex.parallel import DistributedDataParallel
+except ImportError:
+    from torch.nn.parallel import DistributedDataParallel
 
 from .optimization import Adafactor
 from .utils import *
@@ -20,12 +27,11 @@ class AdversarialPretrainerConfig(object):
                 model_config,
                 language_ids,
                 adv_repeat=5,
-                lr=1e-4,
+                lr=None,
                 beta=1e-2,
                 gamma=1e-4,
                 with_cuda=True,
                 train_freq=None,
-                share_file=None,
                 gpu_id=0):
         
         if model_config is not None:
@@ -37,7 +43,6 @@ class AdversarialPretrainerConfig(object):
         self.gamma = gamma
         self.with_cuda = with_cuda
         self.train_freq = train_freq
-        self.share_file = share_file
         self.gpu_id = gpu_id
 
     @classmethod
@@ -114,6 +119,16 @@ class SimpleAdversary(nn.Module):
         return self.softmax(self.linear(inputs))
 
 
+def UniformKLDivergence(scores, dim=-1):
+    """Computes KL divergence from a uniform distribution.  If loss = KL(P || Q),
+    then P(x) is a uniform distribution and Q is the log softmax of the scores.
+    """
+    uniform_log_prob = -torch.tensor(math.log(scores.size(dim)))
+    kl_div = uniform_log_prob - F.log_softmax(scores, dim=dim).mean(dim)
+    kl_loss = kl_div.sum()
+    return kl_loss
+
+
 class AdversarialBertWrapper(nn.Module):
     """
     adds pretraining tasks to entire multilingual model
@@ -126,8 +141,8 @@ class AdversarialBertWrapper(nn.Module):
         self.next_model = NextSentencePrediction(config.hidden_size*2)
 
         # loss calculation
-        self.criterion = nn.NLLLoss()
-        self.mask_criterion = nn.NLLLoss(ignore_index=0)
+        self.criterion = nn.CrossEntropyLoss()
+        self.mask_criterion = nn.CrossEntropyLoss(ignore_index=0)
 
     def forward(self,
                 component,
@@ -139,8 +154,9 @@ class AdversarialBertWrapper(nn.Module):
                 is_next=None):
         if component == 'adversary':
             # return logits for adversarial language prediction
-            embeddings = self.multilingual_model.embeddings(input_ids)
-            _, pooled_vectors = self.multilingual_model.shared(embeddings, attention_mask=mask)
+            with torch.no_grad():
+                embeddings = self.multilingual_model.embeddings(input_ids)
+                _, pooled_vectors = self.multilingual_model.shared(embeddings, attention_mask=mask)
             language_logits = self.adversary_model(pooled_vectors)
             language_loss = self.criterion(language_logits, language_labels)
             return language_loss, language_logits
@@ -159,8 +175,9 @@ class AdversarialBertWrapper(nn.Module):
             # adversarial prediction loss
             hidden_dim = hidden_vectors[-1].size(-1)
             public_pooled, _ = torch.split(pooled_vectors, hidden_dim // 2, -1)
-            language_logits = self.adversary_model(public_pooled)
-            adv_loss = -self.criterion(language_logits, language_labels)
+            with torch.no_grad():
+                language_logits = self.adversary_model(public_pooled)
+            adv_loss = UniformKLDivergence(language_logits)
 
             # public-private vector similarity loss
             public_vectors, private_vectors = torch.split(hidden_vectors[-1], hidden_dim // 2, -1)
@@ -231,10 +248,10 @@ class AdversarialPretrainer:
 
         # initialize optimizers
         if parallelize:
-            self.D_optim = Adafactor(self.model.module.component_parameters("adversary"), config.lr)
+            self.D_optim = Adam(self.model.module.component_parameters("adversary"), config.lr)
             self.lm_optims = Adafactor(self.model.module.component_parameters(), config.lr)
         else:
-            self.D_optim = Adafactor(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
+            self.D_optim = Adam(self.model.component_parameters("adversary"), config.lr) # adversary optimizer
             self.lm_optims = Adafactor(self.model.component_parameters(), config.lr)
 
         # hyperparameters for loss
@@ -244,7 +261,7 @@ class AdversarialPretrainer:
         # how many iterations to accumulate gradients for
         self.train_freq = config.train_freq if config.train_freq is not None else 1
 
-        self._config = config # for checkpointing
+        self.config = config # for checkpointing
         self.position = position
         self.seed = seed
 
@@ -252,7 +269,8 @@ class AdversarialPretrainer:
         return self.iteration(epoch, self.train_data)
 
     def test(self, epoch):
-        return self.iteration(epoch, self.test_data, train=False)
+        with torch.no_grad():
+            return self.iteration(epoch, self.test_data, train=False)
 
     def iteration(self, epoch, data, train=True):
         """
@@ -310,15 +328,7 @@ class AdversarialPretrainer:
                 total=len(language_iter),
                 position=self.position)
 
-        total_mask_loss = 0.
-        total_next_loss = 0.
-        total_adv_loss = 0.
-        total_diff_loss = 0.
-        total_loss = 0.
-
-        total_mask_correct = 0.
-        total_mask_elements = 0.
-        total_next_acc = 0.
+        stats = Counter()
         for i, (language, batch) in language_iter:
             # accumulate gradients if necessary
             if train and i % self.train_freq == 0:
@@ -340,39 +350,43 @@ class AdversarialPretrainer:
                 loss.backward()
 
             # record loss and accuracy statistics
-            total_loss += loss.item()
-            
-            # individual loss statistics
-            total_mask_loss += output["mask_loss"].item()
-            total_next_loss += output["next_loss"].item()
-            total_adv_loss += output["adv_loss"].item()
-            total_diff_loss += output["diff_loss"].item()
-            
-            # batch accuracy statistics
-            total_mask_correct += output["mask_correct"].item()
-            total_mask_elements += output["mask_elements"].item()
-            total_next_acc += output["next_acc"].item()
+            stats["loss"] += loss.item()
+            for key, value in output.items():
+                stats[key] += value.item()
 
             if train and (i + 1) % self.train_freq == 0:
                 self.lm_optims.step()
 
+        if train and (i + 1) % self.train_freq != 0:
+            self.lm_optims.step()
+
         # calculate avg loss and accuracy
-        total_batches = len(language_iter)
-        avg_loss = total_loss / total_batches
-        avg_mask_loss = total_mask_loss / total_batches
-        avg_next_loss = total_next_loss / total_batches
-        avg_adv_loss = self.beta * total_adv_loss / total_batches
-        avg_diff_loss = self.gamma * total_diff_loss  / total_batches
-        avg_mask_acc = total_mask_correct / total_mask_elements
-        avg_next_acc = total_next_acc / total_batches
+        averages = {}
+        for key, value in stats.items():
+            if key != "mask_correct" and key != "mask_elements":
+                averages[key] = value / len(language_iter)
+        averages["mask_acc"] = stats["mask_correct"] / stats["mask_elements"]
 
-        print("EP{0}_{1}:\nmask={2:.6f}\tnext={3:.6f}\tadv={4:.6f}\ndiff={5:.6f}\tmask_acc={6:.6f}\tnext_acc={7:.6f}".format(
-                epoch, str_code, avg_mask_loss, avg_next_loss, avg_adv_loss, avg_diff_loss, avg_mask_acc, avg_next_acc))
-
-        return avg_loss
+        print("EP%d_%s" % (epoch, str_code))
+        print({k: round(v,6) for k, v in averages.items()})
+        return averages
 
     def get_multilingual_model(self):
         return self.model.multilingual_model
+
+    @classmethod
+    def extract_multilingual_model(save_state_file, arch):
+        directory_path, _ = path.split(save_state_file)
+        config = AdversarialPretrainerConfig.from_json_file(path.join(directory_path, "config.json"))
+        model = arch(config)
+        
+        trained_state = OrderedDict()
+        checkpoint = torch.load(save_state_file)
+        for key in model.state_dict():
+            trained_state[key] = checkpoint["model"]["multilingual_model.%s" % key]
+
+        model.load_state_dict(trained_state)
+        return model
 
     def save(self, epoch, file_path=None):
         """saving the current training state in file_path
@@ -383,16 +397,16 @@ class AdversarialPretrainer:
         if file_path is None:
             file_path = "epoch.%d.state" % epoch
 
-        directory_path, file_name = os.path.split(file_path)
+        directory_path, file_name = path.split(file_path)
 
         if file_name == '':
-            file_path = os.path.join(directory_path, "epoch.%d.state" % epoch)
+            file_path = path.join(directory_path, "epoch.%d.state" % epoch)
 
-        if not os.path.exists(directory_path):
+        if not path.exists(directory_path):
             os.makedirs(directory_path)
 
-        with open(os.path.join(directory_path, "config.json"), 'w+') as f:
-            f.write(self._config.to_json_string())
+        with open(path.join(directory_path, "config.json"), 'w+') as f:
+            f.write(self.config.to_json_string())
 
         if isinstance(self.model, (nn.DataParallel, DistributedDataParallel)):
             model_state = self.model.module.cpu().state_dict()
@@ -403,6 +417,7 @@ class AdversarialPretrainer:
 
         # store optimizer state and model
         current_state = {
+            'name': 'adversarial_pretrainer',
             'epoch': epoch,
             'model': model_state,
             'optimizer': self.lm_optims.state_dict(),
@@ -412,15 +427,14 @@ class AdversarialPretrainer:
 
         print("Epoch %d Model and Trainer Saved in:" % epoch, file_path)
 
-
     @classmethod
     def load_checkpoint(cls, checkpoint_folder, arch, train_data, test_data=None, position=0):
         """loading a saved training and model state
         """
-        save_state = torch.load(os.path.join(checkpoint_folder, "checkpoint.state"))
+        save_state = torch.load(path.join(checkpoint_folder, "checkpoint.state"))
         print("Restoring from epoch %d from %s" % (save_state['epoch'], checkpoint_folder))
 
-        config = AdversarialPretrainerConfig.from_json_file(os.path.join(checkpoint_folder, "config.json"))
+        config = AdversarialPretrainerConfig.from_json_file(path.join(checkpoint_folder, "config.json"))
 
         # initialize new trainer
         model = arch(config)
@@ -468,8 +482,8 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self.D_repeat = config.adv_repeat
 
         # initialize optimizers
-        self.D_optim = Adafactor(self.model.module.component_parameters("adversary"), config.lr)
-        self.lm_optims = Adafactor(self.model.module.component_parameters(), config.lr)
+        self.D_optim = BertAdam(self.model.module.component_parameters("adversary"), config.lr)
+        self.lm_optims = BertAdam(self.model.module.component_parameters(), config.lr)
 
         # hyperparameters for loss
         self.beta = config.beta
@@ -481,4 +495,3 @@ class DistributedAdversarialPretrainer(AdversarialPretrainer):
         self._config = config # for checkpointing
         self.position = position
         self.seed = seed
-

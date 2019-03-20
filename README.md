@@ -4,18 +4,20 @@
 Implementation of multi-task shared-private model in order to create context dependent cross-lingual representations of sentences.  Model jointly performs BERT's pretraining task for a set of languages and their corresponding corpora.  This is in addition to the probability of swapping an input token with the mask token or a random token.
 
 ## Installation
-Setup requires the installation of a custom pytorch implementation of BERT and the apex library.  Both must be installed by cloning their respective github repositories and running ```python setup.py install```.  This is in addition the the required python packages listed in ```requirements.txt```.
-
-Custom BERT pytorch <https://github.com/neonrights/pytorch-pretrained-BERT>
+CPU and single GPU training only require packages in ```requirements.txt```.  Distributed training requires installation of NVIDIA Apex.
 
 NVIDIA Apex <https://github.com/NVIDIA/apex/> (note install with ```--cuda_ext``` flag to enable needed cuda support)
 
 ## Usage
 
-### Data format
-All pytorch dataset classes are implemented in the folder *dataset*.
+### Pretraining
+Pre-training is executed by running the command ```python train_multilingual_bert.py [--help] [ARGS]```.  Training can be parallelized through the use of pytorch's distributed launch, e.g. ```python -m torch.distributed.launch --nproc_per_node=N train_multilingual_bert.py [ARGS]```.
 
-#### Pretraining Data
+Pretraining consists of first training the adversary for a set number of cycles before then training a batch for each language model in a round-robin fashion.  Each language model is trained using BERT's pretraining task and is optimized using a weighted sum of BERT's task specific losses, adversary prediction loss, and the squared Frobenius distance between shared and private features.
+
+Pretraining is performed by using the class **AdversarialPretrainer** implemented in the *trainers* folder.
+
+#### Data
 Each sample should be contained within its own document, with each sentence occupying its own line.  Since pretraining involves determining if a sequence of sentences follows another sequence, preferably each sample should contain at least two sentences.  Samples that do not are ignored when loading datsets.
 
 ```txt
@@ -44,6 +46,11 @@ The adversary uses a separate dataset during training implemented by the class *
 
 Example dataset can be found in the folder *example_data*.
 
+### Translator Tuning and XNLI Evaluation
+Translator training is executed by running ```python train_translator.py [--help] [ARGS]```.
+
+Fine-tuning consists of training a transformer model on top of a pretrained model which performs universal translations to a target language.  In the case of the training script this is English.  The final model is then evaluated on the XNLI data set in order to produce a set of BLEU scores.
+
 #### Translator Data
 Translator data should be entered as a .tsv file, with the name of each language as the header for each column.
 
@@ -55,19 +62,7 @@ I love cats!	我爱猫!
 
 The classes **ParallelDataset** and **ParallelTrainDataset** make use of this data format.
 
-### Pretraining
-Pre-training is executed by running the command ```python train_multilingual_bert.py [ARGS]```.  Training can be parallelized through the use of pytorch's distributed launch, e.g. ```python -m torch.distributed.launch --nproc_per_node=N train_multilingual_bert.py [ARGS]```.
-
-Pretraining consists of first training the adversary for a set number of cycles before then training a batch for each language model in a round-robin fashion.  Each language model is trained using BERT's pretraining task and is optimized using a weighted sum of BERT's task specific losses, adversary prediction loss, and the squared Frobenius distance between shared and private features.
-
-Pretraining is performed by using the class **AdversarialPretrainer** implemented in the *trainers* folder.
-
-### Translator Tuning and XNLI Evaluation
-A sample script for fine-tuning and evaluation can be viewed in the file *train_translator_test_xnli.py*.
-
-Fine-tuning consists of training a transformer model on top of a pretrained model which performs universal translations to a target language.  In the case of the training script this is English.  The final model is then evaluated on the XNLI data set in order to produce a set of BLEU scores.
-
-## Data
+## Data Sources
 Current data is generated from the OpenSubtitles Corpus, downloaded from OPUS: the open parallel corpus, and various Wikipedia dumps through the use of the tool WikiExtractor <https://github.com/attardi/wikiextractor>.
 
 ## Coding References
